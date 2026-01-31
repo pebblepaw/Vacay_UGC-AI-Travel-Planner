@@ -165,7 +165,7 @@ class TavilyLocationService:
     
     async def get_place_image(self, place_name: str) -> Optional[str]:
         """
-        Get an image URL for a place using LoremFlickr.
+        Get an image URL for a place using DuckDuckGo Search.
         
         Args:
             place_name: Name of the place
@@ -174,16 +174,38 @@ class TavilyLocationService:
             Image URL or None
         """
         try:
-            # Use LoremFlickr (reliable free image service, no key needed)
-            # Clean the query for URL usage
-            query = place_name.replace(" ", ",").replace("'", "").lower()
-            # Limit query length and add travel context
-            query = query[:50]
-            img_url = f"https://loremflickr.com/600/400/{query},travel,landmark"
-            return img_url
+            # Try DuckDuckGo Image Search first (real images)
+            from duckduckgo_search import DDGS
+            
+            # Clean query and add travel context
+            query = f"{place_name} travel landmark"
+            
+            # Use synchronous DDGS (it's fast enough for this use case)
+            with DDGS() as ddgs:
+                results = list(ddgs.images(
+                    keywords=query,
+                    max_results=1,
+                    safesearch='on',
+                    size='Medium',
+                    type_image='photo'
+                ))
+                
+                if results and len(results) > 0:
+                    image_url = results[0].get('image')
+                    if image_url:
+                        logger.info(f"Found image for {place_name}: {image_url}")
+                        return image_url
+            
+            # Fallback to LoremFlickr if DDG fails
+            logger.info(f"No image found for {place_name}, using fallback")
+            query = place_name.replace(" ", ",").replace("'", "").lower()[:50]
+            return f"https://loremflickr.com/800/600/{query},travel"
+            
         except Exception as e:
             logger.error(f"Error getting image for {place_name}: {e}")
-            return None
+            # Final fallback
+            query = place_name.replace(" ", ",").replace("'", "").lower()[:50]
+            return f"https://loremflickr.com/800/600/{query},travel"
 
 
 # Singleton instance

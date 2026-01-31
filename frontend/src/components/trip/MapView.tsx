@@ -40,6 +40,7 @@ export const MapView = () => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<mapboxgl.Marker[]>([]);
+  const popupsRef = useRef<mapboxgl.Popup[]>([]);
 
   const allPOIs = trip.days.flatMap((day) => day.pois);
   const validPOIs = allPOIs.filter(poi => poi.coords[0] !== 0 && poi.coords[1] !== 0);
@@ -62,7 +63,7 @@ export const MapView = () => {
   // Initialize map
   useEffect(() => {
     if (!mapContainerRef.current) return;
-    
+
     const mapboxToken = import.meta.env.VITE_MAPBOX_PUBLIC;
     if (!mapboxToken) {
       console.error('Mapbox token not found');
@@ -73,7 +74,7 @@ export const MapView = () => {
 
     const map = new mapboxgl.Map({
       container: mapContainerRef.current,
-      style: 'mapbox://styles/mapbox/light-v11',
+      style: 'mapbox://styles/mapbox/streets-v12',
       center: [center.lng, center.lat],
       zoom: 12,
     });
@@ -99,7 +100,7 @@ export const MapView = () => {
       validPOIs.forEach(poi => {
         bounds.extend([poi.coords[0], poi.coords[1]]);
       });
-      
+
       mapRef.current.fitBounds(bounds, {
         padding: { top: 50, bottom: 50, left: 50, right: 50 },
         maxZoom: 14,
@@ -107,19 +108,26 @@ export const MapView = () => {
     }
   }, [validPOIs]);
 
-  // Add markers
+  // Use ref for handler to avoid recreating markers on every click
+  const handleMarkerClickRef = useRef(handleMarkerClick);
+  handleMarkerClickRef.current = handleMarkerClick;
+
+  // Add markers - only recreate when POIs actually change
   useEffect(() => {
     if (!mapRef.current) return;
 
-    // Clear existing markers
+    // Clear existing markers and popups
     markersRef.current.forEach(marker => marker.remove());
     markersRef.current = [];
+    popupsRef.current.forEach(popup => popup.remove());
+    popupsRef.current = [];
 
     // Add new markers for each POI
     validPOIs.forEach((poi, index) => {
       // Create custom marker element
       const el = document.createElement('div');
       el.className = 'mapbox-marker';
+      el.dataset.poiId = poi.id;
       el.style.cssText = `
         width: 36px;
         height: 36px;
@@ -131,31 +139,22 @@ export const MapView = () => {
         justify-content: center;
         cursor: pointer;
         box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-        transition: transform 0.2s ease;
         font-size: 12px;
         font-weight: bold;
         color: white;
       `;
       el.innerHTML = `${index + 1}`;
-      
-      // Add hover effect
-      el.addEventListener('mouseenter', () => {
-        el.style.transform = 'scale(1.2)';
-      });
-      el.addEventListener('mouseleave', () => {
-        el.style.transform = selectedPOI?.id === poi.id ? 'scale(1.3)' : 'scale(1)';
-      });
 
       // Create popup
       const popup = new mapboxgl.Popup({
         offset: 25,
         closeButton: false,
         closeOnClick: false,
-        maxWidth: '200px',
+        maxWidth: '220px',
       }).setHTML(`
-        <div style="padding: 8px;">
-          <img src="${poi.img}" alt="${poi.name}" style="width: 100%; height: 80px; object-fit: cover; border-radius: 8px; margin-bottom: 8px;" onerror="this.src='https://placehold.co/200x80/1a1a2e/eaeaea?text=${encodeURIComponent(poi.name.slice(0, 15))}'"/>
-          <div style="font-weight: 600; font-size: 14px; margin-bottom: 4px;">${poi.name}</div>
+        <div style="padding: 10px; background: white; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+          <img src="${poi.img}" alt="${poi.name}" style="width: 100%; height: 90px; object-fit: cover; border-radius: 8px; margin-bottom: 8px;" onerror="this.src='https://placehold.co/200x90/1a1a2e/eaeaea?text=${encodeURIComponent(poi.name.slice(0, 15))}'"/>
+          <div style="font-weight: 600; font-size: 14px; margin-bottom: 4px; color: #1a1a2e;">${poi.name}</div>
           <div style="font-size: 12px; color: #666;">${poi.category} • ${poi.time_slot || 'Flexible'}</div>
         </div>
       `);
@@ -163,39 +162,41 @@ export const MapView = () => {
       // Create marker
       const marker = new mapboxgl.Marker({ element: el })
         .setLngLat([poi.coords[0], poi.coords[1]])
-        .setPopup(popup)
         .addTo(mapRef.current!);
 
-      // Handle click
-      el.addEventListener('click', () => {
-        handleMarkerClick(poi);
-      });
-
-      // Show popup on hover
+      // Handle hover - show popup with bouncy animation
       el.addEventListener('mouseenter', () => {
-        marker.togglePopup();
-      });
-      el.addEventListener('mouseleave', () => {
-        marker.togglePopup();
+        // Close all other popups first
+        popupsRef.current.forEach(p => p.remove());
+        el.classList.add('marker-hover');
+        popup.setLngLat([poi.coords[0], poi.coords[1]]).addTo(mapRef.current!);
       });
 
+      el.addEventListener('mouseleave', () => {
+        el.classList.remove('marker-hover');
+        popup.remove();
+      });
+
+      // Handle click - use ref to avoid stale closure
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        handleMarkerClickRef.current(poi);
+      });
+
+      popupsRef.current.push(popup);
       markersRef.current.push(marker);
     });
-  }, [validPOIs, handleMarkerClick]);
+  }, [validPOIs]); // Only depend on validPOIs, not the handler
 
-  // Highlight selected marker
+  // Highlight selected marker using CSS class
   useEffect(() => {
     markersRef.current.forEach((marker, index) => {
       const el = marker.getElement();
       const poi = validPOIs[index];
       if (poi && selectedPOI?.id === poi.id) {
-        el.style.transform = 'scale(1.3)';
-        el.style.zIndex = '100';
-        el.style.boxShadow = '0 0 20px rgba(99, 102, 241, 0.6)';
+        el.classList.add('marker-selected');
       } else {
-        el.style.transform = 'scale(1)';
-        el.style.zIndex = '1';
-        el.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
+        el.classList.remove('marker-selected');
       }
     });
   }, [selectedPOI, validPOIs]);
@@ -237,7 +238,7 @@ export const MapView = () => {
           const Icon = categoryIcons[cat];
           return (
             <div key={cat} className="flex items-center gap-1 text-xs text-muted-foreground glass rounded-full px-2 py-1">
-              <div 
+              <div
                 className={`w-3 h-3 rounded-full flex items-center justify-center`}
                 style={{ backgroundColor: categoryColors[cat] }}
               >
@@ -252,9 +253,10 @@ export const MapView = () => {
       {/* Selected POI info panel */}
       {selectedPOI && (
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 40, scale: 0.95 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 40, scale: 0.95 }}
+          transition={{ type: "spring", stiffness: 400, damping: 25 }}
           className="absolute bottom-20 left-4 right-4 z-20 glass rounded-xl overflow-hidden shadow-xl max-w-sm mx-auto"
         >
           <div className="flex">
