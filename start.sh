@@ -22,6 +22,15 @@ if [ ! -d venv ]; then
     exit 1
 fi
 
+# Check if frontend dependencies are installed
+if [ ! -d frontend/node_modules ]; then
+    echo "📦 Installing frontend dependencies..."
+    cd frontend
+    npm install
+    cd ..
+    echo ""
+fi
+
 # Activate venv
 source venv/bin/activate
 
