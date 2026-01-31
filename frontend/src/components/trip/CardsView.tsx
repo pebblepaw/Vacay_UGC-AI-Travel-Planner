@@ -3,14 +3,14 @@ import { motion } from 'framer-motion';
 import { useTripContext } from '@/contexts/TripContext';
 import { POI } from '@/data/mockData';
 import { Badge } from '@/components/ui/badge';
-import { 
-  Clock, 
-  MapPin, 
-  Utensils, 
-  Palette, 
-  Trees, 
-  Building2, 
-  ShoppingBag, 
+import {
+  Clock,
+  MapPin,
+  Utensils,
+  Palette,
+  Trees,
+  Building2,
+  ShoppingBag,
   PartyPopper,
   ChevronLeft,
   ChevronRight
@@ -97,9 +97,8 @@ export const CardsView = () => {
               transition={{ delay: index * 0.05 }}
               whileHover={{ y: -8 }}
               onClick={() => setSelectedPOI(poi)}
-              className={`relative flex-shrink-0 w-72 snap-center cursor-pointer rounded-2xl overflow-hidden glass shadow-card transition-all ${
-                isSelected ? 'ring-2 ring-primary shadow-glow' : ''
-              }`}
+              className={`relative flex-shrink-0 w-72 snap-center cursor-pointer rounded-2xl overflow-hidden glass shadow-card transition-all ${isSelected ? 'ring-2 ring-primary shadow-glow' : ''
+                }`}
             >
               {/* Image */}
               <div className="relative h-48">
@@ -107,8 +106,11 @@ export const CardsView = () => {
                   src={poi.img}
                   alt={poi.name}
                   className="w-full h-full object-cover"
+                  onError={(e) => {
+                    e.currentTarget.src = `https://placehold.co/600x400/1a1a2e/eaeaea?text=${encodeURIComponent(poi.name.slice(0, 20))}`;
+                  }}
                 />
-                
+
                 {/* Gradient overlay */}
                 <div className="absolute inset-0 bg-gradient-to-t from-background/90 via-transparent to-transparent" />
 
@@ -178,15 +180,17 @@ export const CardsView = () => {
               transition={{ delay: index * 0.03 }}
               whileHover={{ y: -4 }}
               onClick={() => setSelectedPOI(poi)}
-              className={`cursor-pointer rounded-xl overflow-hidden bg-card shadow-sm hover:shadow-card transition-all ${
-                isSelected ? 'ring-2 ring-primary' : ''
-              }`}
+              className={`cursor-pointer rounded-xl overflow-hidden bg-card shadow-sm hover:shadow-card transition-all ${isSelected ? 'ring-2 ring-primary' : ''
+                }`}
             >
               <div className="relative h-40">
                 <img
                   src={poi.img}
                   alt={poi.name}
                   className="w-full h-full object-cover"
+                  onError={(e) => {
+                    e.currentTarget.src = `https://placehold.co/600x400/1a1a2e/eaeaea?text=${encodeURIComponent(poi.name.slice(0, 20))}`;
+                  }}
                 />
                 <div className="absolute top-2 left-2">
                   <Badge className={`${categoryColors[poi.category]} text-primary-foreground text-xs gap-1`}>

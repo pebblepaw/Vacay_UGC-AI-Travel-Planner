@@ -71,8 +71,8 @@ export const AddUrlModal = () => {
         setDetectedPlatform(null);
         setOpen(false);
         
-        // Reload page to show new trip (for now)
-        window.location.href = `/trip/${response.trip_id}`;
+        // Redirect to home page with trip ID as query parameter
+        window.location.href = `/?trip=${response.trip_id}`;
       }, 1500);
     } catch (err) {
       setIsProcessing(false);

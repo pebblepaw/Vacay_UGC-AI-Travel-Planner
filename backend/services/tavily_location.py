@@ -165,7 +165,7 @@ class TavilyLocationService:
     
     async def get_place_image(self, place_name: str) -> Optional[str]:
         """
-        Get an image URL for a place using Unsplash.
+        Get an image URL for a place using LoremFlickr.
         
         Args:
             place_name: Name of the place
@@ -174,10 +174,12 @@ class TavilyLocationService:
             Image URL or None
         """
         try:
-            # Use Unsplash Source API (no key needed for basic use)
-            # Returns a random image matching the query
-            query = place_name.replace(" ", "%20")
-            img_url = f"https://source.unsplash.com/600x400/?{query},travel"
+            # Use LoremFlickr (reliable free image service, no key needed)
+            # Clean the query for URL usage
+            query = place_name.replace(" ", ",").replace("'", "").lower()
+            # Limit query length and add travel context
+            query = query[:50]
+            img_url = f"https://loremflickr.com/600/400/{query},travel,landmark"
             return img_url
         except Exception as e:
             logger.error(f"Error getting image for {place_name}: {e}")

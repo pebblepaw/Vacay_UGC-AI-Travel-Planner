@@ -4,15 +4,15 @@ import { POI } from '@/data/mockData';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { 
-  ChevronDown, 
-  Clock, 
-  MapPin, 
-  Utensils, 
-  Palette, 
-  Trees, 
-  Building2, 
-  ShoppingBag, 
+import {
+  ChevronDown,
+  Clock,
+  MapPin,
+  Utensils,
+  Palette,
+  Trees,
+  Building2,
+  ShoppingBag,
   PartyPopper,
   Home
 } from 'lucide-react';
@@ -90,9 +90,8 @@ export const TimelineView = () => {
                     {day.pois.length} stops
                   </Badge>
                   <ChevronDown
-                    className={`h-5 w-5 text-muted-foreground transition-transform ${
-                      expandedDays.includes(day.day_number) ? 'rotate-180' : ''
-                    }`}
+                    className={`h-5 w-5 text-muted-foreground transition-transform ${expandedDays.includes(day.day_number) ? 'rotate-180' : ''
+                      }`}
                   />
                 </div>
               </div>
@@ -120,11 +119,10 @@ export const TimelineView = () => {
 
                       {/* POI Card */}
                       <Card
-                        className={`overflow-hidden cursor-pointer transition-all hover:shadow-card ${
-                          isSelected
+                        className={`overflow-hidden cursor-pointer transition-all hover:shadow-card ${isSelected
                             ? 'ring-2 ring-primary shadow-glow'
                             : ''
-                        }`}
+                          }`}
                         onClick={() => setSelectedPOI(poi)}
                       >
                         <div className="flex">
@@ -134,6 +132,9 @@ export const TimelineView = () => {
                               src={poi.img}
                               alt={poi.name}
                               className="w-full h-full object-cover"
+                              onError={(e) => {
+                                e.currentTarget.src = `https://placehold.co/128x128/1a1a2e/eaeaea?text=${encodeURIComponent(poi.name.slice(0, 15))}`;
+                              }}
                             />
                             <div
                               className={`absolute top-2 left-2 p-1.5 rounded-lg ${categoryColors[poi.category]}`}
@@ -185,7 +186,7 @@ export const TimelineView = () => {
                     className="relative"
                   >
                     <div className="absolute -left-[31px] w-4 h-4 rounded-full bg-primary border-2 border-background" />
-                    
+
                     <Card className="overflow-hidden bg-secondary/30">
                       <div className="flex">
                         <div className="relative w-24 h-24 sm:w-32 sm:h-32 flex-shrink-0">
@@ -193,6 +194,9 @@ export const TimelineView = () => {
                             src={trip.accommodation.img}
                             alt={trip.accommodation.name}
                             className="w-full h-full object-cover"
+                            onError={(e) => {
+                              e.currentTarget.src = `https://placehold.co/128x128/1a1a2e/eaeaea?text=${encodeURIComponent(trip.accommodation.name.slice(0, 15))}`;
+                            }}
                           />
                           <div className="absolute top-2 left-2 p-1.5 rounded-lg bg-primary">
                             <Home className="h-3 w-3 text-primary-foreground" />
