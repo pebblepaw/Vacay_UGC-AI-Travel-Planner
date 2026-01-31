@@ -15,8 +15,11 @@ import {
   Link, 
   Loader2,
   Check,
-  Video
+  Video,
+  AlertCircle
 } from 'lucide-react';
+import { processVideos } from '@/lib/api';
+import { useToast } from '@/hooks/use-toast';
 
 const platformPatterns = [
   { name: 'TikTok', pattern: /tiktok\.com/, icon: '📱', color: 'bg-foreground' },
@@ -30,25 +33,36 @@ export const AddUrlModal = () => {
   const [url, setUrl] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [detectedPlatform, setDetectedPlatform] = useState<typeof platformPatterns[0] | null>(null);
+  const { toast } = useToast();
 
   const handleUrlChange = (value: string) => {
     setUrl(value);
+    setError(null);
     
     // Detect platform
     const platform = platformPatterns.find(p => p.pattern.test(value));
     setDetectedPlatform(platform || null);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!url.trim()) return;
 
     setIsProcessing(true);
+    setError(null);
     
-    // Simulate processing
-    setTimeout(() => {
+    try {
+      // Call backend API
+      const response = await processVideos([url]);
+      
       setIsProcessing(false);
       setIsComplete(true);
+      
+      toast({
+        title: "Success!",
+        description: response.message,
+      });
       
       // Reset after showing success
       setTimeout(() => {
@@ -56,8 +70,21 @@ export const AddUrlModal = () => {
         setIsComplete(false);
         setDetectedPlatform(null);
         setOpen(false);
+        
+        // Reload page to show new trip (for now)
+        window.location.href = `/trip/${response.trip_id}`;
       }, 1500);
-    }, 2000);
+    } catch (err) {
+      setIsProcessing(false);
+      const errorMessage = err instanceof Error ? err.message : 'Failed to process video';
+      setError(errorMessage);
+      
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: errorMessage,
+      });
+    }
   };
 
   return (
