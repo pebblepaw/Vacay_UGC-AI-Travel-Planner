@@ -1,5 +1,7 @@
-import React, { createContext, useContext, useState, useCallback, ReactNode } from 'react';
-import { Trip, POI, ChatMessage, sampleTrip, initialChatMessages, mockChatResponses } from '@/data/mockData';
+import React, { createContext, useContext, useState, useCallback, ReactNode, useEffect } from 'react';
+import { Trip, POI, ChatMessage, sampleTrip, initialChatMessages } from '@/data/mockData';
+import { getTrip, sendChatMessage } from '@/lib/api';
+import { useToast } from '@/hooks/use-toast';
 
 interface TripContextType {
   trip: Trip;
@@ -13,6 +15,7 @@ interface TripContextType {
   setIsChatOpen: (open: boolean) => void;
   activeView: 'map' | 'timeline' | 'cards';
   setActiveView: (view: 'map' | 'timeline' | 'cards') => void;
+  isLoading: boolean;
 }
 
 const TripContext = createContext<TripContextType | undefined>(undefined);
@@ -27,14 +30,43 @@ export const useTripContext = () => {
 
 interface TripProviderProps {
   children: ReactNode;
+  tripId?: string;
 }
 
-export const TripProvider: React.FC<TripProviderProps> = ({ children }) => {
-  const [trip] = useState<Trip>(sampleTrip);
+export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId }) => {
+  const [trip, setTrip] = useState<Trip>(sampleTrip);
   const [selectedPOI, setSelectedPOI] = useState<POI | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(initialChatMessages);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [activeView, setActiveView] = useState<'map' | 'timeline' | 'cards'>('map');
+  const [isLoading, setIsLoading] = useState(false);
+  const { toast } = useToast();
+
+  // Load trip from backend if tripId provided
+  useEffect(() => {
+    if (tripId) {
+      setIsLoading(true);
+      getTrip(tripId)
+        .then((data) => {
+          setTrip(data);
+          // Add initial greeting from AI
+          setChatMessages([{
+            id: `msg_${Date.now()}`,
+            type: 'agent',
+            content: `Hey! 👋 I've loaded your trip "${data.title}". Feel free to ask me anything!`,
+            timestamp: new Date(),
+          }]);
+        })
+        .catch((error) => {
+          toast({
+            variant: 'destructive',
+            title: 'Error loading trip',
+            description: error.message,
+          });
+        })
+        .finally(() => setIsLoading(false));
+    }
+  }, [tripId, toast]);
 
   const addChatMessage = useCallback((message: Omit<ChatMessage, 'id' | 'timestamp'>) => {
     const newMessage: ChatMessage = {
@@ -45,28 +77,31 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children }) => {
     setChatMessages(prev => [...prev, newMessage]);
   }, []);
 
-  const sendUserMessage = useCallback((content: string) => {
+  const sendUserMessage = useCallback(async (content: string) => {
     // Add user message
     addChatMessage({ type: 'user', content });
 
-    // Simulate AI response based on keywords
-    setTimeout(() => {
-      const lowerContent = content.toLowerCase();
+    try {
+      // Call backend API
+      const response = await sendChatMessage(trip.trip_id, content);
       
-      if (lowerContent.includes('cheaper') || lowerContent.includes('budget')) {
-        setChatMessages(prev => [...prev, { ...mockChatResponses['cheaper hotel'], id: `msg_${Date.now()}`, timestamp: new Date() }]);
-      } else if (lowerContent.includes('sushi') || lowerContent.includes('replace')) {
-        setChatMessages(prev => [...prev, { ...mockChatResponses['sushi'], id: `msg_${Date.now()}`, timestamp: new Date() }]);
-      } else if (lowerContent.includes('coffee') || lowerContent.includes('cafe')) {
-        setChatMessages(prev => [...prev, { ...mockChatResponses['coffee'], id: `msg_${Date.now()}`, timestamp: new Date() }]);
-      } else {
-        addChatMessage({
-          type: 'agent',
-          content: "I'm on it! Let me search for the best options based on your saved videos... 🔍",
-        });
-      }
-    }, 1000);
-  }, [addChatMessage]);
+      // Add agent response(s)
+      response.messages.forEach((msg) => {
+        if (msg.type === 'agent') {
+          addChatMessage({
+            type: 'agent',
+            content: msg.content,
+          });
+        }
+      });
+    } catch (error) {
+      // Fallback to error message
+      addChatMessage({
+        type: 'agent',
+        content: "Sorry, I'm having trouble connecting right now. Please try again.",
+      });
+    }
+  }, [addChatMessage, trip.trip_id]);
 
   const handleInterruptAction = useCallback((messageId: string, action: 'approve' | 'reject', optionId?: string) => {
     setChatMessages(prev => prev.map(msg => {
@@ -106,6 +141,7 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children }) => {
         setIsChatOpen,
         activeView,
         setActiveView,
+        isLoading,
       }}
     >
       {children}

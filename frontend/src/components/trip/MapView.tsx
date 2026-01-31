@@ -29,10 +29,12 @@ export const MapView = () => {
 
   const allPOIs = trip.days.flatMap((day) => day.pois);
 
-  const center = {
-    lat: allPOIs.reduce((sum, poi) => sum + poi.coords[1], 0) / allPOIs.length,
-    lng: allPOIs.reduce((sum, poi) => sum + poi.coords[0], 0) / allPOIs.length,
-  };
+  // Calculate map center from POI coordinates
+  const validPOIs = allPOIs.filter(poi => poi.coords[0] !== 0 && poi.coords[1] !== 0);
+  const center = validPOIs.length > 0 ? {
+    lat: validPOIs.reduce((sum, poi) => sum + poi.coords[1], 0) / validPOIs.length,
+    lng: validPOIs.reduce((sum, poi) => sum + poi.coords[0], 0) / validPOIs.length,
+  } : { lat: 35.6762, lng: 139.6503 }; // Default to Tokyo
 
   const handleMarkerClick = useCallback((poi: POI) => {
     setSelectedPOI(poi);
@@ -43,11 +45,28 @@ export const MapView = () => {
     window.open(url, '_blank');
   };
 
+  // Generate Mapbox static map URL if we have valid coordinates
+  const hasValidCoords = validPOIs.length > 0;
+  const mapboxToken = import.meta.env.VITE_MAPBOX_PUBLIC;
+  const staticMapUrl = hasValidCoords && mapboxToken
+    ? `https://api.mapbox.com/styles/v1/mapbox/light-v11/static/${center.lng},${center.lat},12,0/800x600@2x?access_token=${mapboxToken}`
+    : null;
+
   return (
     <div className="relative h-full w-full rounded-2xl overflow-hidden bg-gradient-to-br from-secondary via-muted to-secondary">
-      {/* Map placeholder with visual markers */}
-      <div className="absolute inset-0 p-4">
-        {/* Decorative grid */}
+      {/* Background map image if available */}
+      {staticMapUrl && (
+        <div className="absolute inset-0 opacity-30">
+          <img 
+            src={staticMapUrl} 
+            alt="Map background" 
+            className="w-full h-full object-cover"
+          />
+        </div>
+      )}
+      
+      {/* Map overlay with visual markers */}
+      <div className="absolute inset-0 p-4">{/* Decorative grid */}
         <div className="absolute inset-0 opacity-20" style={{
           backgroundImage: 'radial-gradient(circle at 1px 1px, hsl(var(--muted-foreground)) 1px, transparent 0)',
           backgroundSize: '24px 24px'
@@ -56,7 +75,7 @@ export const MapView = () => {
         {/* Header */}
         <div className="relative z-10 flex items-center justify-between mb-4">
           <div className="glass rounded-xl px-4 py-2">
-            <h3 className="font-semibold text-foreground">Tokyo, Japan</h3>
+            <h3 className="font-semibold text-foreground">{trip.title}</h3>
             <p className="text-xs text-muted-foreground">{allPOIs.length} locations</p>
           </div>
           <Button variant="outline" size="sm" onClick={openInGoogleMaps} className="glass">
