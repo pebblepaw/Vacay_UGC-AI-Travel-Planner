@@ -119,10 +119,30 @@ class ItineraryBuilderService:
                 img_url = geo_data.get('img') or await tavily_location.get_place_image(name) or ""
             
             # Create POI
+            # Map any invalid categories to valid ones
+            category = loc.get('type', 'Culture')
+            category_map = {
+                'Landmark': 'Culture',
+                'Attraction': 'Culture',
+                'Museum': 'Art',
+                'Restaurant': 'Food',
+                'Cafe': 'Food',
+                'Bar': 'Nightlife',
+                'Club': 'Nightlife',
+                'Park': 'Nature',
+                'Garden': 'Nature',
+                'Market': 'Shopping',
+                'Mall': 'Shopping',
+                'Temple': 'Culture',
+                'Shrine': 'Culture',
+            }
+            if category not in ['Food', 'Art', 'Nature', 'Culture', 'Shopping', 'Nightlife']:
+                category = category_map.get(category, 'Culture')
+            
             poi = POI(
                 id=f"poi_{uuid.uuid4().hex[:8]}",
                 name=name,
-                category=loc.get('type', 'Culture'),
+                category=category,
                 coords=coords,
                 img=img_url,
                 time_slot="",  # Will be filled when organizing into days

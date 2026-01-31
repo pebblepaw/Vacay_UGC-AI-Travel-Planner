@@ -21,8 +21,8 @@ class GeminiAnalyzerService:
         # Configure Gemini API
         genai.configure(api_key=settings.GEMINI_API_KEY)
         
-        # Use Gemini 1.5 Pro (supports video)
-        self.model = genai.GenerativeModel('gemini-1.5-pro')
+        # Use Gemini 2.0 Flash (supports video)
+        self.model = genai.GenerativeModel('gemini-2.0-flash')
         
         self.analysis_prompt = """
 Analyze this video and extract travel-related information. Focus on:

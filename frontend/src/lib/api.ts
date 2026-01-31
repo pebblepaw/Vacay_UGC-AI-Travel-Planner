@@ -1,7 +1,7 @@
-"""
-API client functions for frontend.
-Connects to backend FastAPI server.
-"""
+/**
+ * API client functions for frontend.
+ * Connects to backend FastAPI server.
+ */
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 

@@ -103,22 +103,18 @@ class VideoDownloaderService:
                     }
                 
                 # Download the video
-                ydl.download([url])
+                info_dict = ydl.extract_info(url, download=True)
                 
-                # Find the downloaded file
-                # yt-dlp saves with actual extension, find it
-                video_id = Path(ydl_opts['outtmpl']).stem.split('.')[0]
-                downloaded_files = list(self.download_dir.glob(f"{video_id}.*"))
+                # Get the actual downloaded filename from yt-dlp
+                file_path = ydl.prepare_filename(info_dict)
                 
-                if not downloaded_files:
+                if not Path(file_path).exists():
                     return {
                         'success': False,
                         'error': 'Download completed but file not found',
                         'title': title,
                         'platform': platform
                     }
-                
-                file_path = str(downloaded_files[0])
                 
                 logger.info(f"Downloaded video: {title} -> {file_path}")
                 
