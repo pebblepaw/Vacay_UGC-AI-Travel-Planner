@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 
-from backend.routers import videos, trips
+from backend.routers import videos, trips, chat
 
 # Configure logging
 logging.basicConfig(
@@ -35,6 +35,7 @@ app.add_middleware(
 # Include routers
 app.include_router(videos.router)
 app.include_router(trips.router)
+app.include_router(chat.router)
 
 
 @app.get("/")
