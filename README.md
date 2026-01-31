@@ -1,73 +1,119 @@
-# Welcome to your Lovable project
+# VACAY 🌴
 
-## Project info
+> Transform TikTok travel videos into actionable travel itineraries with AI
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+VACAY is an AI-powered travel planner that takes short-form travel videos (TikTok, YouTube Shorts) and automatically extracts locations, creates day-by-day itineraries, and displays them on an interactive map.
 
-## How can I edit this code?
+## ✨ Features
 
-There are several ways of editing your application.
+- **Video Processing**: Paste a TikTok URL and watch as AI extracts all the travel spots
+- **Smart Itinerary Building**: Locations are automatically clustered by proximity and organized into days
+- **Interactive Maps**: See all your destinations on a Mapbox map with route visualization
+- **AI Chat**: Refine your itinerary by chatting with the AI assistant
 
-**Use Lovable**
+## 🚀 Quick Start
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+### Prerequisites
+- Python 3.11+
+- Node.js 18+
+- API Keys (see below)
 
-Changes made via Lovable will be committed automatically to this repo.
+### Setup
 
-**Use your preferred IDE**
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/pebblepaw/Vacay_UGC-AI-Travel-Planner.git
+   cd Vacay_UGC-AI-Travel-Planner
+   ```
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+2. **Set up environment variables**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your API keys
+   ```
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+3. **Start the backend**
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate
+   cd backend
+   pip install -r requirements.txt
+   uvicorn main:app --reload --port 8000
+   ```
 
-Follow these steps:
+4. **Start the frontend** (in a new terminal)
+   ```bash
+   cd frontend
+   npm install
+   npm run dev
+   ```
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+5. **Open the app**
+   - Frontend: http://localhost:5173
+   - API Docs: http://localhost:8000/docs
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+## 🔑 Required API Keys
 
-# Step 3: Install the necessary dependencies.
-npm i
+| Service | Purpose | Get it at |
+|---------|---------|-----------|
+| Gemini | Video analysis | [Google AI Studio](https://aistudio.google.com/) |
+| Tavily | Location search | [Tavily](https://tavily.com/) |
+| Mapbox | Maps | [Mapbox](https://mapbox.com/) |
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+## 📁 Project Structure
+
+```
+VACAY/
+├── backend/          # Python FastAPI server
+│   ├── services/     # Video download, AI analysis, geocoding
+│   ├── routers/      # API endpoints
+│   └── models/       # Pydantic schemas
+├── frontend/         # React + Vite + Shadcn UI
+│   └── src/
+│       ├── components/
+│       ├── contexts/
+│       └── services/
+├── BRD.md           # Development instructions
+└── PROGRESS.md      # Development log
 ```
 
-**Edit a file directly in GitHub**
+## 🧪 Testing
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+```bash
+# Backend tests
+cd backend
+python -m pytest tests/ -v
 
-**Use GitHub Codespaces**
+# Frontend tests
+cd frontend
+npm test
+```
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+## 📖 Documentation
 
-## What technologies are used for this project?
+- [BRD.md](./BRD.md) - Full development specification and task list
+- [PROGRESS.md](./PROGRESS.md) - Development log and patterns
 
-This project is built with:
+## 🛠️ Tech Stack
 
+**Frontend**
+- React 18 + TypeScript
 - Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+- Tailwind CSS + Shadcn UI
+- Framer Motion
+- Mapbox GL JS
 
-## How can I deploy this project?
+**Backend**
+- Python 3.11+
+- FastAPI
+- yt-dlp (video downloading)
+- Google Gemini 1.5 Pro (AI analysis)
+- Tavily (location search)
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+## 📝 License
 
-## Can I connect a custom domain to my Lovable project?
+MIT
 
-Yes, you can!
+## 🤝 Contributing
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+See [BRD.md](./BRD.md) for the development roadmap and task list.
