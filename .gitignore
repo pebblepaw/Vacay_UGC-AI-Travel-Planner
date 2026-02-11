@@ -59,4 +59,5 @@ temp/
 BRD.md
 PROGRESS.md
 QUICKSTART.md
-Demo/Screen_Recordings/
+Demo/*
+!Demo/VACAY_DEMO_1.mp4
