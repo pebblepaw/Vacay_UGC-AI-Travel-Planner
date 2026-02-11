@@ -11,6 +11,10 @@ VACAY is an AI-powered travel planner that takes short-form travel videos (TikTo
 - **Interactive Maps**: See all your destinations on a Mapbox map with route visualization
 - **AI Chat**: Refine your itinerary by chatting with the AI assistant
 
+## Demo Video
+
+[Demo Video](Demo/VACAY_DEMO_1.mp4)
+
 ## Quick Start
 
 ### Prerequisites
@@ -68,11 +72,11 @@ VACAY/
 │   ├── services/     # Video download, AI analysis, geocoding
 │   ├── routers/      # API endpoints
 │   └── models/       # Pydantic schemas
-├── frontend/         # React + Vite + Shadcn UI
-│   └── src/
-│       ├── components/
-│       ├── contexts/
-│       └── services/
+└── frontend/         # React + Vite + Shadcn UI
+    └── src/
+        ├── components/
+        ├── contexts/
+        └── services/
 ```
 
 ## Testing
