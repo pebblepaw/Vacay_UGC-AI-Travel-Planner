@@ -12,8 +12,7 @@ VACAY is an AI-powered travel planner that takes short-form travel videos (TikTo
 - **AI Chat**: Refine your itinerary by chatting with the AI assistant
 
 ## Demo Video
-
-<video src="Demo/VACAY_DEMO_1.mp4" width="320" height="240" controls></video>
+<video src="https://github.com/user-attachments/assets/862660d9-cfae-4a80-ba3c-4c1583b5342c" width="320" height="240" controls></video>
 
 ## Quick Start
 
