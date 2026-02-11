@@ -54,3 +54,9 @@ htmlcov/
 tmp/
 temp/
 *.tmp
+
+# Documentation
+BRD.md
+PROGRESS.md
+QUICKSTART.md
+Demo/

@@ -1,17 +1,17 @@
-# VACAY 🌴
+# VACAY
 
 > Transform TikTok travel videos into actionable travel itineraries with AI
 
 VACAY is an AI-powered travel planner that takes short-form travel videos (TikTok, YouTube Shorts) and automatically extracts locations, creates day-by-day itineraries, and displays them on an interactive map.
 
-## ✨ Features
+## Features
 
 - **Video Processing**: Paste a TikTok URL and watch as AI extracts all the travel spots
 - **Smart Itinerary Building**: Locations are automatically clustered by proximity and organized into days
 - **Interactive Maps**: See all your destinations on a Mapbox map with route visualization
 - **AI Chat**: Refine your itinerary by chatting with the AI assistant
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 - Python 3.11+
@@ -52,7 +52,7 @@ VACAY is an AI-powered travel planner that takes short-form travel videos (TikTo
    - Frontend: http://localhost:5173
    - API Docs: http://localhost:8000/docs
 
-## 🔑 Required API Keys
+## Required API Keys
 
 | Service | Purpose | Get it at |
 |---------|---------|-----------|
@@ -60,7 +60,7 @@ VACAY is an AI-powered travel planner that takes short-form travel videos (TikTo
 | Tavily | Location search | [Tavily](https://tavily.com/) |
 | Mapbox | Maps | [Mapbox](https://mapbox.com/) |
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 VACAY/
@@ -73,11 +73,9 @@ VACAY/
 │       ├── components/
 │       ├── contexts/
 │       └── services/
-├── BRD.md           # Development instructions
-└── PROGRESS.md      # Development log
 ```
 
-## 🧪 Testing
+## Testing
 
 ```bash
 # Backend tests
@@ -89,12 +87,7 @@ cd frontend
 npm test
 ```
 
-## 📖 Documentation
-
-- [BRD.md](./BRD.md) - Full development specification and task list
-- [PROGRESS.md](./PROGRESS.md) - Development log and patterns
-
-## 🛠️ Tech Stack
+## Tech Stack
 
 **Frontend**
 - React 18 + TypeScript
@@ -109,11 +102,3 @@ npm test
 - yt-dlp (video downloading)
 - Google Gemini 1.5 Pro (AI analysis)
 - Tavily (location search)
-
-## 📝 License
-
-MIT
-
-## 🤝 Contributing
-
-See [BRD.md](./BRD.md) for the development roadmap and task list.
