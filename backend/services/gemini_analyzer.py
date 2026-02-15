@@ -33,6 +33,9 @@ Analyze this video and extract travel-related information. Focus on:
    - type: category (Food, Art, Nature, Culture, Shopping, Nightlife)
    - description: Why it's cool/worth visiting based on what's shown
    - mentioned_time: approximate timestamp if mentioned
+   - priority: 'high' (must visit), 'normal' or 'low' (if skipped it's fine)
+   - intensity: 'high' (active/hiking), 'normal' (walking), 'low' (relaxing)
+   - visit_duration: estimated minutes (60, 90, 120) based on activity type 
 
 2. **Activities**: What activities are shown or suggested? (eating, sightseeing, shopping, etc.)
 

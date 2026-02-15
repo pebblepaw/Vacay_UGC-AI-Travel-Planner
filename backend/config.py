@@ -9,7 +9,6 @@ from typing import Optional
 # Get project root (parent of backend/)
 PROJECT_ROOT = Path(__file__).parent.parent
 
-
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
     
@@ -18,6 +17,7 @@ class Settings(BaseSettings):
     TAVLY_API: str
     MAPBOX_PUBLIC: str
     MAPBOX_SECRET: str
+    GEMINI_MODEL: str = "gemini-2.0-flash"
     
     # Optional settings with defaults
     DEBUG: bool = True

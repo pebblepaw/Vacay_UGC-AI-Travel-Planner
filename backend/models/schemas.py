@@ -46,7 +46,9 @@ class POI(BaseModel):
     time_slot: str = Field(..., description="e.g. '10:00 - 13:00'")
     vibe: str = Field(..., description="Description of why this place is cool")
     travel_time: Optional[str] = Field(None, description="e.g. '🚃 25 min train'")
-
+    priority: Literal['high','normal','low'] = Field(...,description = "Importance of visiting this spot")
+    intensity: Literal['high','normal','low'] = Field(...,description = "Energy level required")
+    visit_duration: int = Field(...,description = "Estimated visit time in minutes")
 
 class Day(BaseModel):
     """One day of the itinerary."""
