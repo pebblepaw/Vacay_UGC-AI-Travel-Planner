@@ -31,10 +31,10 @@ def add_poi(
     day_number: int,
     name: str, 
     category: str, 
-    longitude: float,
-    latitude: float,
     time_slot: str, 
     vibe: str,
+    longitude: float = 0.0,
+    latitude: float = 0.0,
     priority: str = "normal",
     intensity: str = "normal",
     visit_duration: int = 60, 
@@ -45,10 +45,10 @@ def add_poi(
         day_number: Which day to add to (e.g. 1, 2, 3)
         name: Name of the place (e.g. 'Tsukiji Outer Market')
         category: One of: Food, Art, Nature, Culture, Shopping, Nightlife
-        longitude: Longitude coordinate
-        latitude: Latitude coordinate
         time_slot: Time range (e.g. '12:00 - 13:30')
         vibe: Description of why this place is worth visiting
+        longitude: Longitude coordinate (0 = auto-geocode)
+        latitude: Latitude coordinate (0 = auto-geocode)
         priority: 'high', 'normal', or 'low'
         intensity: 'high', 'normal', or 'low' (energy level required)
         visit_duration: Estimated visit time in minutes

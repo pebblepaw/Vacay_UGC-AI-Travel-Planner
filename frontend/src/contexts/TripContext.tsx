@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useState, useCallback, ReactNode, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, ReactNode, useEffect, useRef } from 'react';
 import { Trip, POI, ChatMessage, sampleTrip, initialChatMessages } from '@/data/mockData';
-import { getTrip, sendChatMessage } from '@/lib/api';
+import { getTrip, sendChatMessage, listTrips } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
 
 interface TripContextType {
@@ -37,32 +37,63 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId }) 
   const [trip, setTrip] = useState<Trip>(sampleTrip);
   const [selectedPOI, setSelectedPOI] = useState<POI | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(initialChatMessages);
+  const chatMessagesRef = useRef<ChatMessage[]>(initialChatMessages);
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    chatMessagesRef.current = chatMessages;
+  }, [chatMessages]);
+
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [activeView, setActiveView] = useState<'timeline' | 'cards'>('timeline');
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
 
-  // Load trip from backend if tripId provided
+  // Load trip from backend — by tripId, or fetch the most recent trip
   useEffect(() => {
-    if (tripId) {
+    const loadTrip = async (id: string) => {
       setIsLoading(true);
-      getTrip(tripId)
+      try {
+        const data = await getTrip(id);
+        setTrip(data);
+        setChatMessages([{
+          id: `msg_${Date.now()}`,
+          type: 'agent',
+          content: `Hey! 👋 I've loaded your trip "${data.title}". Feel free to ask me anything!`,
+          timestamp: new Date(),
+        }]);
+      } catch (error: any) {
+        toast({
+          variant: 'destructive',
+          title: 'Error loading trip',
+          description: error.message,
+        });
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    if (tripId) {
+      loadTrip(tripId);
+    } else {
+      // No trip param — load the most recent trip from Supabase
+      setIsLoading(true);
+      listTrips()
         .then((data) => {
-          setTrip(data);
-          // Add initial greeting from AI
-          setChatMessages([{
-            id: `msg_${Date.now()}`,
-            type: 'agent',
-            content: `Hey! 👋 I've loaded your trip "${data.title}". Feel free to ask me anything!`,
-            timestamp: new Date(),
-          }]);
+          if (data.trips && data.trips.length > 0) {
+            const latest = data.trips[0];
+            setTrip(latest);
+            setChatMessages([{
+              id: `msg_${Date.now()}`,
+              type: 'agent',
+              content: `Hey! 👋 I've loaded your trip "${latest.title}". Feel free to ask me anything!`,
+              timestamp: new Date(),
+            }]);
+          }
+          // If no trips exist, keep the sampleTrip default
         })
-        .catch((error) => {
-          toast({
-            variant: 'destructive',
-            title: 'Error loading trip',
-            description: error.message,
-          });
+        .catch(() => {
+          // Backend not available — keep sampleTrip default
         })
         .finally(() => setIsLoading(false));
     }
@@ -81,6 +112,18 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId }) 
     // Add user message
     addChatMessage({ type: 'user', content });
 
+    // Build history from existing chat messages (excluding thinking indicators)
+    // Using functional ref to get latest messages at call time
+    const currentMessages = chatMessagesRef.current;
+    const history = currentMessages
+      .filter(m => m.type === 'user' || m.type === 'agent')
+      .filter(m => !m.content.startsWith('⏳'))
+      .slice(-10) // Last 10 messages
+      .map(m => ({
+        role: m.type === 'user' ? 'user' : 'agent',
+        content: m.content,
+      }));
+
     // Show thinking indicator immediately
     const thinkingId = `msg_thinking_${Date.now()}`;
     setChatMessages(prev => [...prev, {
@@ -91,8 +134,8 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId }) 
     }]);
 
     try {
-      // Call backend API
-      const response = await sendChatMessage(trip.trip_id, content);
+      // Call backend API with history
+      const response = await sendChatMessage(trip.trip_id, content, history);
 
       // Remove thinking message
       setChatMessages(prev => prev.filter(m => m.id !== thinkingId));

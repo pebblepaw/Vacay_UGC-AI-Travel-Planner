@@ -104,14 +104,15 @@ export async function deleteTrip(tripId: string) {
  */
 export async function sendChatMessage(
   tripId: string,
-  message: string
+  message: string,
+  history?: { role: string; content: string }[]
 ): Promise<ChatResponse> {
   const response = await fetch(`${API_BASE_URL}/api/trips/${tripId}/chat`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, history: history || [] }),
   });
 
   if (!response.ok) {

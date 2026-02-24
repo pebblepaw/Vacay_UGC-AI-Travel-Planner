@@ -62,9 +62,22 @@ def search_agent_node(state: AgentState) -> dict:
     GUIDELINES:
     - ALWAYS include the city/area name in your search query for relevant results.
     - Use the search_places tool to find information.
-    - Present results clearly with name, description, and coordinates (if available).
-    - When you have results, summarize the top 3-5 options for the user.
-    - If coordinates are available, mention them so they can be used with add_poi or swap_poi later."""
+    - When presenting results to the user, format them as a clean numbered list.
+    - Keep descriptions brief (1 sentence per place).
+    - Do NOT repeat the full itinerary.
+    - End with a short prompt like "Which one would you like to add?"
+
+    FORMATTING EXAMPLE:
+    Here are some options near [area]:
+
+    1. **Restaurant Name** — Brief description of cuisine/vibe (coords: 2.3522, 48.8566)
+    2. **Restaurant Name** — Brief description of cuisine/vibe (coords: 2.3488, 48.8534)
+    3. **Restaurant Name** — Brief description of cuisine/vibe (coords: 2.3401, 48.8612)
+
+    Which one would you like to add?
+
+    IMPORTANT: Always include the coordinates from the search results. Format: (coords: longitude, latitude).
+    This ensures the next agent can place the POI on the map without asking the user."""
 
     import logging as _logging
     _log = _logging.getLogger(__name__)

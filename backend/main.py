@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 
 from backend.routers import videos, trips, chat
+from backend.storage.supabase_storage import supabase_storage
 
 # Configure logging
 logging.basicConfig(
@@ -44,6 +45,14 @@ app.add_middleware(
 app.include_router(videos.router)
 app.include_router(trips.router)
 app.include_router(chat.router)
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Seed placeholder trip if the database is empty."""
+    logger.info("Checking Supabase for existing trips...")
+    await supabase_storage.seed_placeholder_if_empty()
+
 
 @app.get("/")
 async def root():

@@ -61,12 +61,9 @@ def response_formatter_node(state: AgentState) -> dict:
             "critique": "",  # Clear stale critique
         }
 
-    # ── Final response: format with trip summary ──
-    trip_summary = _format_trip_summary(trip)
-
+    # ── Final response: use the AI content directly ──
+    # The trip summary is redundant since the user sees the timeline/cards view
     formatted = last_ai_content
-    if trip_summary:
-        formatted += f"\n\n**Updated Itinerary:**\n{trip_summary}"
 
     return {
         "messages": [AIMessage(content=formatted)],

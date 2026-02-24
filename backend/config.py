@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     MAPBOX_SECRET: str
     GEMINI_MODEL: str = "gemini-2.0-flash"
     
+    # Supabase
+    SUPABASE_PROJECT_URL: str
+    SUPABASE_SECRET_KEY: str
+
     # Optional settings with defaults
     DEBUG: bool = True
     MAX_VIDEO_SIZE_MB: int = 500
@@ -34,7 +38,7 @@ class Settings(BaseSettings):
         env_file = str(PROJECT_ROOT / ".env")
         env_file_encoding = "utf-8"
         case_sensitive = True
-        extra = "ignore"  # Ignore extra fields in .env (like SUPABASE keys for Phase 2)
+        extra = "ignore"
 
 
 # Singleton instance

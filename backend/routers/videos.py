@@ -10,7 +10,7 @@ from backend.models.schemas import VideoProcessRequest, VideoProcessResponse
 from backend.services.video_downloader import video_downloader
 from backend.services.gemini_analyzer import gemini_analyzer
 from backend.services.itinerary_builder import itinerary_builder
-from backend.storage.local_storage import local_storage
+from backend.storage.supabase_storage import supabase_storage as storage
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,7 @@ async def process_videos(
         logger.info(f"Built itinerary: {trip.trip_id} - {trip.title}")
         
         # Step 4: Save trip to storage
-        saved = await local_storage.save_trip(trip)
+        saved = await storage.save_trip(trip)
         
         if not saved:
             raise HTTPException(

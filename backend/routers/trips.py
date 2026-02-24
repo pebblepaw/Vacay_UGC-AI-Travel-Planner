@@ -7,7 +7,7 @@ from typing import List
 import logging
 
 from backend.models.schemas import Trip, TripListResponse
-from backend.storage.local_storage import local_storage
+from backend.storage.supabase_storage import supabase_storage as storage
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ async def list_trips():
         List of all trips from storage
     """
     try:
-        trips = await local_storage.list_all_trips()
+        trips = await storage.list_all_trips()
         return TripListResponse(trips=trips)
         
     except Exception as e:
@@ -46,7 +46,7 @@ async def get_trip(trip_id: str):
         Trip object
     """
     try:
-        trip = await local_storage.load_trip(trip_id)
+        trip = await storage.load_trip(trip_id)
         
         if not trip:
             raise HTTPException(
@@ -79,7 +79,7 @@ async def delete_trip(trip_id: str):
     """
     try:
         # Check if trip exists first
-        exists = await local_storage.trip_exists(trip_id)
+        exists = await storage.trip_exists(trip_id)
         
         if not exists:
             raise HTTPException(
@@ -88,7 +88,7 @@ async def delete_trip(trip_id: str):
             )
         
         # Delete trip
-        deleted = await local_storage.delete_trip(trip_id)
+        deleted = await storage.delete_trip(trip_id)
         
         if not deleted:
             raise HTTPException(

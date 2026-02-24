@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import ReactMarkdown from 'react-markdown';
 import { useTripContext } from '@/contexts/TripContext';
 import { ChatMessage, ChatOption } from '@/data/mockData';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -151,13 +152,24 @@ const MessageBubble = ({
     <motion.div
       initial={{ opacity: 0, x: -20 }}
       animate={{ opacity: 1, x: 0 }}
-      className="flex items-end gap-2 mb-4"
+      className="flex items-start gap-2 mb-4"
     >
-      <div className="w-8 h-8 rounded-full gradient-bg flex items-center justify-center shrink-0">
+      <div className="w-8 h-8 rounded-full gradient-bg flex items-center justify-center shrink-0 mt-1">
         <Bot className="h-4 w-4 text-primary-foreground" />
       </div>
-      <div className="bg-secondary px-4 py-2 rounded-2xl rounded-bl-md max-w-[80%]">
-        <p className="text-sm text-foreground">{message.content}</p>
+      <div className="bg-secondary px-4 py-2 rounded-2xl rounded-bl-md max-w-[80%] prose prose-sm prose-invert dark:prose-invert max-w-none
+        [&_p]:text-sm [&_p]:text-foreground [&_p]:my-1
+        [&_strong]:text-foreground [&_strong]:font-semibold
+        [&_ul]:my-1 [&_ul]:pl-4 [&_ul]:list-disc
+        [&_ol]:my-1 [&_ol]:pl-4 [&_ol]:list-decimal
+        [&_li]:text-sm [&_li]:text-foreground [&_li]:my-0.5
+        [&_h1]:text-base [&_h1]:font-bold [&_h1]:my-2 [&_h1]:text-foreground
+        [&_h2]:text-sm [&_h2]:font-bold [&_h2]:my-2 [&_h2]:text-foreground
+        [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:my-1.5 [&_h3]:text-foreground
+        [&_hr]:my-2 [&_hr]:border-border
+        [&_a]:text-primary [&_a]:underline
+      ">
+        <ReactMarkdown>{message.content}</ReactMarkdown>
       </div>
     </motion.div>
   );

@@ -96,11 +96,22 @@ def travel_editor_node(state: AgentState) -> dict:
     GUIDELINES:
     - Use POI IDs from the trip context above (e.g., poi_1, poi_2) when calling delete_poi, swap_poi, or move_poi.
     - After deleting or adding POIs, consider calling replan_day to fix the schedule.
-    - When adding a POI, you MUST provide coordinates. If you don't know exact coords, estimate based on the area.
     - For category, use exactly one of: Food, Art, Nature, Culture, Shopping, Nightlife.
     - For priority/intensity, use exactly one of: high, normal, low.
-    - If the task requires information you don't have (like specific restaurant coords), say so — the orchestrator will route to search_agent first.
-    - When you're done making changes, respond with a summary of what you did. Do NOT call any more tools."""
+    - When you're done making changes, respond with a summary of what you did. Do NOT call any more tools.
+
+    CRITICAL — NEVER ASK THE USER FOR INFORMATION:
+    - NEVER ask for coordinates. If coords appear in conversation history (from search results), use them. Otherwise pass longitude=0, latitude=0 — the system will auto-geocode.
+    - NEVER ask for a time. Pick a sensible default based on the category:
+      * Food (lunch): "12:00 - 13:30"
+      * Food (dinner): "19:00 - 20:30"
+      * Nature: "09:00 - 11:00"
+      * Culture: "10:00 - 12:00"
+      * Art: "14:00 - 16:00"
+      * Shopping: "15:00 - 17:00"
+      * Nightlife: "20:00 - 22:00"
+    - NEVER ask for any other details. Use reasonable defaults and just add the POI.
+    - If the user selected an item from search results, look in the conversation history for coords and details."""
 
     # Use the message history so the LLM sees previous tool results in this loop
     # But replace/add the system message with updated trip context

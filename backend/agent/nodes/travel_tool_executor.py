@@ -18,6 +18,8 @@ Necessary whenever TOols need share mutable state.
 
 import uuid
 import logging
+import httpx
+import asyncio
 from math import radians, cos, sin, asin, sqrt
 # from backend.agent.tools.trip_tools import haversine_km
 from langchain_core.messages import ToolMessage
@@ -71,6 +73,28 @@ def _fetch_image(place_name: str) -> str:
     # Fallback
     query = place_name.replace(" ", ",").replace("'", "").lower()[:50]
     return f"https://loremflickr.com/800/600/{query},travel"
+
+
+def _auto_geocode(place_name: str, city_hint: str) -> tuple[float, float] | None:
+    """Synchronously geocode a place name using Nominatim. Returns (lon, lat) or None."""
+    import time
+    try:
+        time.sleep(1.1)  # Nominatim rate limit
+        with httpx.Client() as client:
+            query = f"{place_name}, {city_hint}" if city_hint else place_name
+            response = client.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={"q": query, "format": "json", "limit": 1},
+                headers={"User-Agent": "VACAY-Travel-Planner/1.0"},
+                timeout=10.0,
+            )
+            if response.status_code == 200:
+                data = response.json()
+                if data:
+                    return (float(data[0]["lon"]), float(data[0]["lat"]))
+    except Exception as e:
+        logger.warning(f"Auto-geocode failed for '{place_name}': {e}")
+    return None
 
 
 def travel_tool_executor(state: AgentState) -> dict: 
@@ -188,13 +212,31 @@ def _execute_add(trip: Trip, args: dict) -> tuple[Trip, str]:
     while new_id in all_ids:
         new_id = f"poi_{uuid.uuid4().hex[:6]}"
 
+    # Auto-geocode if coords are missing or (0,0)
+    lon = args.get("longitude", 0.0)
+    lat = args.get("latitude", 0.0)
+    if abs(lon) < 0.01 and abs(lat) < 0.01:
+        # Try to geocode from place name + trip city
+        city_hint = trip.title if trip.title else ""
+        geocoded = _auto_geocode(args["name"], city_hint)
+        if geocoded:
+            lon, lat = geocoded
+            logger.info(f"Auto-geocoded '{args['name']}' → ({lon}, {lat})")
+        else:
+            # Fallback: use average coords of existing POIs
+            all_coords = [(p.coords[0], p.coords[1]) for d in trip.days for p in d.pois if p.coords and abs(p.coords[0]) > 0.01]
+            if all_coords:
+                lon = sum(c[0] for c in all_coords) / len(all_coords)
+                lat = sum(c[1] for c in all_coords) / len(all_coords)
+                logger.info(f"Using average coords for '{args['name']}' → ({lon}, {lat})")
+
     # Create the POI
     img_url = _fetch_image(args["name"])
     new_poi = POI(
         id=new_id,
         name=args["name"],
         category=args["category"],
-        coords=(args["longitude"], args["latitude"]),
+        coords=(lon, lat),
         img=args.get("img", img_url),
         time_slot=args["time_slot"],
         vibe=args["vibe"],

@@ -217,16 +217,17 @@ export const MapView = () => {
 
   return (
     <div className="relative h-full w-full rounded-2xl overflow-hidden bg-gradient-to-br from-secondary via-muted to-secondary">
-      {/* Map container */}
-      {hasValidCoords ? (
-        <div ref={mapContainerRef} className="absolute inset-0" />
-      ) : (
-        <div className="absolute inset-0 flex items-center justify-center">
+      {/* Map container - always rendered so basemap is visible */}
+      <div ref={mapContainerRef} className="absolute inset-0" />
+
+      {/* Overlay when no geocoded locations */}
+      {!hasValidCoords && (
+        <div className="absolute inset-0 flex items-center justify-center z-10 bg-black/20 backdrop-blur-sm rounded-2xl">
           <div className="text-center p-8">
-            <MapPin className="h-16 w-16 mx-auto mb-4 text-muted-foreground opacity-50" />
-            <h3 className="text-lg font-semibold text-muted-foreground">No locations yet</h3>
-            <p className="text-sm text-muted-foreground mt-2">
-              Add a TikTok video to see locations on the map
+            <MapPin className="h-16 w-16 mx-auto mb-4 text-white opacity-70" />
+            <h3 className="text-lg font-semibold text-white">No pinned locations</h3>
+            <p className="text-sm text-white/70 mt-2">
+              Locations couldn't be geocoded — the map will update once coordinates are resolved
             </p>
           </div>
         </div>

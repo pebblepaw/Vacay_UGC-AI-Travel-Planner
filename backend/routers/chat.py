@@ -10,7 +10,7 @@ import logging
 import uuid
 
 from backend.models.schemas import ChatRequest, ChatResponse, ChatMessage, Trip
-from backend.storage.local_storage import local_storage
+from backend.storage.supabase_storage import supabase_storage as storage
 from backend.agent.graph import app 
 
 logger = logging.getLogger(__name__)
@@ -22,16 +22,25 @@ async def send_chat_message(trip_id: str, request: ChatRequest):
   
     try:
         # Verify trip exists
-        trip = await local_storage.load_trip(trip_id)
+        trip = await storage.load_trip(trip_id)
         if not trip:
             raise HTTPException(
                 status_code=404,
                 detail=f"Trip '{trip_id}' not found"
             )
         
+        # Build message history for context
+        history_messages = []
+        if request.history:
+            for h in request.history[-10:]:  # Last 10 exchanges max
+                if h.get("role") == "user":
+                    history_messages.append(HumanMessage(content=h["content"]))
+                elif h.get("role") == "agent":
+                    history_messages.append(AIMessage(content=h["content"]))
+
         # Prepare input for LangGraph
         initial_state = {
-            "messages": [HumanMessage(content=request.message)],
+            "messages": history_messages + [HumanMessage(content=request.message)],
             "trip": trip,
             "next_node": None,
             "plan": None,
@@ -66,7 +75,7 @@ async def send_chat_message(trip_id: str, request: ChatRequest):
               # The trip in state might be a Trip object or a dict
             if isinstance(updated_trip, dict):
                 updated_trip = Trip(**updated_trip)
-            await local_storage.save_trip(updated_trip)
+            await storage.save_trip(updated_trip)
 
         # Format response
         user_message = ChatMessage(

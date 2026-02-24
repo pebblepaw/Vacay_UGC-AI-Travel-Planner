@@ -113,10 +113,10 @@ class ItineraryBuilderService:
                 logger.warning(f"Could not geocode location: {name}")
                 # Use default coords (city center placeholder)
                 coords = (0.0, 0.0)
-                img_url = await tavily_location.get_place_image(name) or ""
+                img_url = await tavily_location.get_place_image(name, city) or ""
             else:
                 coords = tuple(geo_data['coords'])
-                img_url = geo_data.get('img') or await tavily_location.get_place_image(name) or ""
+                img_url = geo_data.get('img') or await tavily_location.get_place_image(name, city) or ""
             
             # Create POI
             # Map any invalid categories to valid ones

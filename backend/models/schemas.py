@@ -119,6 +119,7 @@ class TripListResponse(BaseModel):
 class ChatRequest(BaseModel):
     """Request to send a chat message."""
     message: str
+    history: Optional[list[dict]] = None  # [{"role": "user"|"agent", "content": "..."}]
 
 
 class ChatResponse(BaseModel):

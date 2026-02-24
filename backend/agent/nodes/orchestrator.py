@@ -28,7 +28,7 @@ orchestrator_prompt = ChatPromptTemplate.from_template("""
     You are the Orchestrator for a travel itinerary editor. You manage a team of specialist agents:
 
     1. 'travel_editor' — Modifies the trip itinerary (add, delete, swap, move POIs; replan a day; optimize the trip)
-    2. 'search_agent' — Searches the web for places, restaurants, activities (use when the user wants to FIND something)
+    2. 'search_agent' — Searches the web for places, restaurants, activities (use when the user wants to FIND something NEW)
     3. 'chitchat' — Handles greetings, thank-yous, off-topic questions
 
     CURRENT TRIP:
@@ -36,13 +36,26 @@ orchestrator_prompt = ChatPromptTemplate.from_template("""
 
     USER REQUEST: {input}
 
-    CONVERSATION HISTORY (last 5 messages):
+    CONVERSATION HISTORY (last messages):
     {history}
 
     PREVIOUS CRITIQUE (if any): {critique}
 
     YOUR TASK:
-    Analyze the user's request and create a plan. A plan is a list of steps to fulfill the request.
+    Analyze the user's request IN CONTEXT of the conversation history and create a plan.
+
+    CRITICAL — FOLLOW-UP DETECTION:
+    Look at the CONVERSATION HISTORY carefully. If the previous agent message presented options/results 
+    (e.g. a list of restaurants) and the user's current message is selecting one of those options 
+    (e.g. "Cafe 12", "the first one", "Let's go with X", "1", "option 2"), then:
+    - This is a FOLLOW-UP SELECTION, NOT a new search request
+    - Route to 'travel_editor' with an instruction to ADD the selected place to the itinerary
+    - Include the place name, category, coordinates (if shown), and any details from the previous search results in the instruction
+    - If coordinates were shown (e.g. "coords: 2.35, 48.85"), include them in the instruction
+    - Specify which day to add it to (pick a reasonable day based on the trip context)
+    - Specify a reasonable time slot based on the type of activity (e.g. lunch = "12:00 - 13:30")
+    - Do NOT route back to search_agent — the search is already done
+    - Do NOT ask the user any follow-up questions
 
     RULES:
     - Simple requests have 1 step. Example: "Remove the ramen" → ["delete the ramen POI"]
@@ -64,6 +77,8 @@ orchestrator_prompt = ChatPromptTemplate.from_template("""
     - User: "Find me a good sushi place" → {{"next_node": "search_agent", "plan": ["search for sushi restaurants"], "current_step_instruction": "Search for highly-rated sushi restaurants in Tokyo"}}
     - User: "Replace ramen with something fancier" → {{"next_node": "search_agent", "plan": ["search for upscale restaurants near Shinjuku Tokyo", "swap the ramen POI with the best result"], "current_step_instruction": "Search for upscale restaurants near Shinjuku Tokyo"}}
     - User: "Optimize my trip" → {{"next_node": "travel_editor", "plan": ["optimize the full trip"], "current_step_instruction": "Run optimize_trip to rebalance POIs across days by geography"}}
+    - [After search results showed restaurant options] User: "Let's go with Cafe 12" → {{"next_node": "travel_editor", "plan": ["add Cafe 12 to the itinerary"], "current_step_instruction": "Add a new POI named 'Cafe 12' with category 'Food' to Day 1 at time '12:00 - 13:30'. Coordinates from search: longitude=2.3522, latitude=48.8566. Use add_poi tool. Do NOT ask the user any questions."}}
+    - [After search results showed options] User: "1" → {{"next_node": "travel_editor", "plan": ["add the first search result to the itinerary"], "current_step_instruction": "Add a new POI named '[first result name]' with category 'Food' to Day 1 at time '12:00 - 13:30'. Use coords from search results if available, otherwise use 0,0. Use add_poi tool. Do NOT ask any questions."}}
     """)
 
 # Convert pydantic trip data structure -> to string 
@@ -134,7 +149,18 @@ def orchestrator_node(state: AgentState) -> dict:
     # ── New request or first step: ask LLM to plan ──
     last_msg = messages[-1].content
     trip_str = _format_trip_with_ids(trip)
-    history = "\n".join([m.content for m in messages[-5:]])
+
+    # Build history with role labels so LLM can track the conversation
+    history_lines = []
+    for m in messages[-10:]:  # Last 10 messages for context
+        if hasattr(m, 'type'):
+            if m.type == 'human':
+                history_lines.append(f"USER: {m.content}")
+            elif m.type == 'ai' and m.content:
+                # Truncate long AI responses to keep prompt manageable
+                content = m.content[:500] + "..." if len(m.content) > 500 else m.content
+                history_lines.append(f"AGENT: {content}")
+    history = "\n".join(history_lines) if history_lines else "No previous conversation."
 
     try:
         result = chain.invoke({
