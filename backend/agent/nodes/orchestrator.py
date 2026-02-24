@@ -5,7 +5,7 @@ from backend.config import settings
 from backend.agent.state import AgentState
 
 llm = ChatGoogleGenerativeAI(
-    model_name="gemini-2.0-flash",
+    model="gemini-2.0-flash",
     api_key=settings.GEMINI_API_KEY
 )
 

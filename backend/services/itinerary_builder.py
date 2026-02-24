@@ -147,7 +147,10 @@ class ItineraryBuilderService:
                 img=img_url,
                 time_slot="",  # Will be filled when organizing into days
                 vibe=loc.get('description', 'A must-visit spot!'),
-                travel_time=None
+                travel_time=None,
+                priority=loc.get('priority', 'normal'),
+                intensity=loc.get('intensity', 'normal'),
+                visit_duration=loc.get('visit_duration', 60)
             )
             
             pois.append(poi)

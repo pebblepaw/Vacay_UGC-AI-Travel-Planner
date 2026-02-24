@@ -45,7 +45,6 @@ app.include_router(videos.router)
 app.include_router(trips.router)
 app.include_router(chat.router)
 
-
 @app.get("/")
 async def root():
     """Health check endpoint."""

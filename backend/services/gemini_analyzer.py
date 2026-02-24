@@ -51,7 +51,10 @@ Return your analysis as JSON with this structure:
       "name": "Location Name",
       "type": "Food|Art|Nature|Culture|Shopping|Nightlife",
       "description": "Why it's cool",
-      "mentioned_time": "0:15" or null
+      "mentioned_time": "0:15" or null,
+      "priority": "high",
+      "intensity": "normal",
+      "visit_duration": 60
     }
   ],
   "activities": ["activity1", "activity2"],

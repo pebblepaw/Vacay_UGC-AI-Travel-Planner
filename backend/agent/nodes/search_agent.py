@@ -6,7 +6,7 @@ from langchain_core.messages import AIMessage
 
 
 llm = ChatGoogleGenerativeAI(
-    model_name="gemini-2.0-flash",
+    model="gemini-2.0-flash",
     api_key=settings.GEMINI_API_KEY
 )
 

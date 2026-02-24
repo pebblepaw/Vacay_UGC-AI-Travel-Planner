@@ -4,14 +4,14 @@ Handles chat messages and agent responses (Phase 1: Mock responses).
 """
 import abc
 from fastapi import APIRouter, HTTPException
+from langchain_core.messages import HumanMessage, AIMessage
 from datetime import datetime
 import logging
 import uuid
 
-from backend.models.schemas import ChatRequest, ChatResponse, ChatMessage
+from backend.models.schemas import ChatRequest, ChatResponse, ChatMessage, Trip
 from backend.storage.local_storage import local_storage
 from backend.agent.graph import app 
-from langchain_core.messages import HumanMessage, AIMessage
 
 logger = logging.getLogger(__name__)
 
@@ -31,18 +31,38 @@ async def send_chat_message(trip_id: str, request: ChatRequest):
         
         # Prepare input for LangGraph
         initial_state = {
-            "messages": [HumanMessage(content = request.message)],
-            "trip": trip
+            "messages": [HumanMessage(content=request.message)],
+            "trip": trip,
+            "next_node": None,
+            "plan": None,
+            "current_step": 0,
+            "critique": "",
+            "iteration_count": 0,
+            "last_agent": None,
+            "pending_changes": None,
         }
 
-        # Run the graph, invoke till END
+        # .ainvoke = asynchronously invoke, i.e. runs until 
+        # it hits END or an interrupt
         result = await app.ainvoke(initial_state)
 
-        final_message = result['messages'][-1].content
-        updated_trip = result.get('trip')
+        # ── Extract results ──
+        final_messages = result.get("messages", [])
+        updated_trip = result.get("trip")
+
+        # Find the last AI message (the response to show the user)
+        final_content = "I'm not sure how to help with that."
+
+        for msg in reversed(final_messages):
+            if isinstance(msg, AIMessage) and msg.content:
+                final_content = msg.content
+                break
 
         # Save updated trip
         if updated_trip:
+              # The trip in state might be a Trip object or a dict
+            if isinstance(updated_trip, dict):
+                updated_trip = Trip(**updated_trip)
             await local_storage.save_trip(updated_trip)
 
         # Format response
@@ -56,20 +76,18 @@ async def send_chat_message(trip_id: str, request: ChatRequest):
         agent_message = ChatMessage(
             id=f"msg_{uuid.uuid4().hex[:8]}",
             type="agent",
-            content=final_message,
+            content=final_content,
             timestamp=datetime.now()
         )
         
         # Return both messages
         return ChatResponse(messages=[user_message, agent_message])
         
-
+    except HTTPException:
+            raise  # Re-raise HTTP errors as-is
     except Exception as e:
-        logger.error(f"Error in chat for trip {trip_id}: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"status_code: {str(e)}"
-        )
+        logger.error(f"Error in chat for trip {trip_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Agent error: {str(e)}")
 
 
 # def _generate_mock_response(user_message: str, trip) -> str:

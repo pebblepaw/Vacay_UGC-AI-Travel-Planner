@@ -16,7 +16,7 @@ from backend.agent.nodes.chitchat import chitchat_node
 from backend.agent.tools.trip_tools import optimize_route, shorten_trip, search_places
 
 # Added gemini_model to the settings file, check again. 
-llm = ChatGoogleGenerativeAI(model_name=settings.GEMINI_MODEL, 
+llm = ChatGoogleGenerativeAI(model=settings.GEMINI_MODEL, 
                             api_key=settings.GEMINI_API_KEY,
                             temperature=0)
 

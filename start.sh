@@ -35,11 +35,11 @@ fi
 source venv/bin/activate
 
 # Start backend in background
+# Start backend in background
 echo "🔧 Starting backend server..."
-cd backend 2>/dev/null || true
+# Don't cd into backend, run from root so module 'backend' is found
 python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 &
 BACKEND_PID=$!
-cd ..
 
 # Wait a bit for backend to start
 sleep 2

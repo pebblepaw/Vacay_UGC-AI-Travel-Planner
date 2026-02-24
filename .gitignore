@@ -49,11 +49,13 @@ Thumbs.db
 coverage/
 .coverage
 htmlcov/
+archive/
 
 # Temporary
 tmp/
 temp/
 *.tmp
+*.log
 
 # Documentation
 BRD.md
@@ -62,4 +64,5 @@ QUICKSTART.md
 Demo/*
 !Demo/VACAY_DEMO_1.mp4
 !*.md/README.md
+
 

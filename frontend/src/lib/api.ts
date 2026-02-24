@@ -3,7 +3,7 @@
  * Connects to backend FastAPI server.
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
 export interface VideoProcessRequest {
   urls: string[];
@@ -62,7 +62,7 @@ export async function processVideos(
  */
 export async function listTrips() {
   const response = await fetch(`${API_BASE_URL}/api/trips`);
-  
+
   if (!response.ok) {
     throw new Error('Failed to fetch trips');
   }
@@ -75,7 +75,7 @@ export async function listTrips() {
  */
 export async function getTrip(tripId: string) {
   const response = await fetch(`${API_BASE_URL}/api/trips/${tripId}`);
-  
+
   if (!response.ok) {
     throw new Error('Trip not found');
   }
@@ -90,7 +90,7 @@ export async function deleteTrip(tripId: string) {
   const response = await fetch(`${API_BASE_URL}/api/trips/${tripId}`, {
     method: 'DELETE',
   });
-  
+
   if (!response.ok) {
     throw new Error('Failed to delete trip');
   }
