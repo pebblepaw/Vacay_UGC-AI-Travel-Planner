@@ -13,8 +13,8 @@ interface TripContextType {
   handleInterruptAction: (messageId: string, action: 'approve' | 'reject', optionId?: string) => void;
   isChatOpen: boolean;
   setIsChatOpen: (open: boolean) => void;
-  activeView: 'map' | 'timeline' | 'cards';
-  setActiveView: (view: 'map' | 'timeline' | 'cards') => void;
+  activeView: 'timeline' | 'cards';
+  setActiveView: (view: 'timeline' | 'cards') => void;
   isLoading: boolean;
 }
 
@@ -38,7 +38,7 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId }) 
   const [selectedPOI, setSelectedPOI] = useState<POI | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(initialChatMessages);
   const [isChatOpen, setIsChatOpen] = useState(false);
-  const [activeView, setActiveView] = useState<'map' | 'timeline' | 'cards'>('map');
+  const [activeView, setActiveView] = useState<'timeline' | 'cards'>('timeline');
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
 

@@ -1,10 +1,9 @@
 import { motion } from 'framer-motion';
-import { Map, List, LayoutGrid } from 'lucide-react';
+import { List, LayoutGrid } from 'lucide-react';
 import { useTripContext } from '@/contexts/TripContext';
 import { cn } from '@/lib/utils';
 
 const views = [
-  { id: 'map' as const, label: 'Map', icon: Map },
   { id: 'timeline' as const, label: 'Timeline', icon: List },
   { id: 'cards' as const, label: 'Cards', icon: LayoutGrid },
 ];

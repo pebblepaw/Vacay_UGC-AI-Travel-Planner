@@ -359,16 +359,28 @@ def _execute_replan_day(trip: Trip, day_number: int) -> tuple[Trip, str]:
 
         # Compute travel_time to the NEXT POI using haversine
         if idx < len(ordered) - 1:
-            dist_km = haversine_km(poi.coords, ordered[idx + 1].coords)
+            next_poi = ordered[idx + 1]
+            # Skip distance calc if either POI has placeholder coords (0,0)
+            if (poi.coords[0] == 0 and poi.coords[1] == 0) or \
+               (next_poi.coords[0] == 0 and next_poi.coords[1] == 0):
+                poi.travel_time = "🚶 10 min walk"
+                transit_minutes = 15
+                current_time_minutes = end_minutes + transit_minutes
+                continue
+            dist_km = haversine_km(poi.coords, next_poi.coords)
             if dist_km < 1.5:
                 poi.travel_time = f"🚶 {max(5, int(dist_km * 15))} min walk"
                 transit_minutes = max(10, int(dist_km * 15))
             elif dist_km < 10:
                 poi.travel_time = f"🚃 {max(10, int(dist_km * 3))} min train"
                 transit_minutes = max(15, int(dist_km * 3))
-            else:
+            elif dist_km < 50:
                 poi.travel_time = f"🚗 {max(15, int(dist_km * 1.5))} min drive"
                 transit_minutes = max(20, int(dist_km * 1.5))
+            else:
+                # Very far — cap at reasonable estimate
+                poi.travel_time = f"🚗 ~{int(dist_km / 60 * 60)} hr drive"
+                transit_minutes = min(180, int(dist_km * 1.5))
             current_time_minutes = end_minutes + transit_minutes
         else:
             poi.travel_time = None  # Last POI of the day

@@ -45,17 +45,6 @@ const TripContent = () => {
           {/* Content Area */}
           <div className="flex-1 px-4 overflow-hidden">
             <AnimatePresence mode="wait">
-              {activeView === 'map' && (
-                <motion.div
-                  key="map-info"
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -20 }}
-                  className="h-full"
-                >
-                  <TimelineView />
-                </motion.div>
-              )}
               {activeView === 'timeline' && (
                 <motion.div
                   key="timeline"

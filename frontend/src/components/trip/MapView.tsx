@@ -188,13 +188,25 @@ export const MapView = () => {
     });
   }, [validPOIs]); // Only depend on validPOIs, not the handler
 
-  // Highlight selected marker using CSS class
+  // Highlight selected marker and fly to it
   useEffect(() => {
     markersRef.current.forEach((marker, index) => {
       const el = marker.getElement();
       const poi = validPOIs[index];
       if (poi && selectedPOI?.id === poi.id) {
+        // Re-trigger the bounce animation by removing & re-adding the class
+        el.classList.remove('marker-selected');
+        void el.offsetWidth; // Force reflow to restart animation
         el.classList.add('marker-selected');
+
+        // Fly the map to the selected marker
+        if (mapRef.current) {
+          mapRef.current.flyTo({
+            center: [poi.coords[0], poi.coords[1]],
+            zoom: Math.max(mapRef.current.getZoom(), 14),
+            duration: 800,
+          });
+        }
       } else {
         el.classList.remove('marker-selected');
       }
