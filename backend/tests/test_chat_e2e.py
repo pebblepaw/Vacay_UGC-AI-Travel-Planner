@@ -1,208 +1,102 @@
-# backend/tests/test_agent_e2e.py
-
-"""
-End-to-end tests for the LangGraph agent.
-
-These tests use REAL LLM calls (Gemini) and verify the full pipeline:
-orchestrator → agent → tools → critic → response
-
-Run with: pytest backend/tests/test_agent_e2e.py -v -s
-The -s flag shows print output (useful for seeing agent responses).
-
-NOTE: These require GEMINI_API_KEY in .env and cost real API credits.
-"""
-
-import sys
-from pathlib import Path
-
-project_root = Path(__file__).parent.parent.parent  # Go up 3 levels: tests → backend → VACAY
-sys.path.insert(0, str(project_root))
-
 import pytest
-import copy
-from langchain_core.messages import HumanMessage
-from backend.agent.graph import app
-from backend.models.schemas import Trip, Day, POI, SourceVideo, Accommodation
+import json
+import time
+from pathlib import Path
+from playwright.sync_api import Page, expect
 
-# ── Test fixture: a simple 2-day trip ──
+# Constants
+MOCK_TRIP_ID = "test_chat_123"
+TRIPS_DIR = Path("backend/data/trips")
 
-@pytest.fixture
-def sample_trip() -> Trip:
-    """A minimal trip for testing."""
-    return Trip(
-        trip_id="test_trip_001",
-        title="Test Trip to Tokyo",
-        source_videos=[
-            SourceVideo(platform="tiktok", url="https://example.com", title="Test")
+@pytest.fixture(scope="function", autouse=True)
+def setup_mock_trip():
+    """Injects a mock trip into the backend storage."""
+    TRIPS_DIR.mkdir(parents=True, exist_ok=True)
+    
+    trip_data = {
+        "trip_id": MOCK_TRIP_ID,
+        "title": "Test Chat Trip",
+        "source_videos": [
+            {"platform": "youtube", "url": "http://test.com", "title": "Test Video"}
         ],
-        days=[
-            Day(
-                day_number=1,
-                date="2024-04-15",
-                pois=[
-                    POI(
-                        id="poi_1",
-                        name="TeamLab Borderless",
-                        category="Art",
-                        coords=(139.7834, 35.6267),
-                        img="https://example.com/img1.jpg",
-                        time_slot="10:00 - 13:00",
-                        vibe="Digital art museum",
-                        priority="high",
-                        intensity="normal",
-                        visit_duration=180,
-                    ),
-                    POI(
-                        id="poi_2",
-                        name="Shinjuku Ramen Shop",
-                        category="Food",
-                        coords=(139.71, 35.685),
-                        img="https://example.com/img2.jpg",
-                        time_slot="13:30 - 14:30",
-                        vibe="Famous tonkotsu ramen",
-                        priority="normal",
-                        intensity="normal",
-                        visit_duration=60,
-                    ),
-                    POI(
-                        id="poi_3",
-                        name="Shinjuku Gyoen Garden",
-                        category="Nature",
-                        coords=(139.71, 35.6852),
-                        img="https://example.com/img3.jpg",
-                        time_slot="15:00 - 17:00",
-                        vibe="Beautiful Japanese garden",
-                        priority="low",
-                        intensity="low",
-                        visit_duration=120,
-                    ),
-                ],
-            ),
-            Day(
-                day_number=2,
-                date="2024-04-16",
-                pois=[
-                    POI(
-                        id="poi_4",
-                        name="Harajuku Takeshita Street",
-                        category="Shopping",
-                        coords=(139.7028, 35.6716),
-                        img="https://example.com/img4.jpg",
-                        time_slot="10:00 - 12:00",
-                        vibe="Kawaii culture central",
-                        priority="normal",
-                        intensity="normal",
-                        visit_duration=120,
-                    ),
-                    POI(
-                        id="poi_5",
-                        name="Meiji Shrine",
-                        category="Culture",
-                        coords=(139.6993, 35.6764),
-                        img="https://example.com/img5.jpg",
-                        time_slot="13:00 - 15:00",
-                        vibe="Peaceful Shinto shrine",
-                        priority="high",
-                        intensity="low",
-                        visit_duration=120,
-                    ),
-                ],
-            ),
+        "days": [
+            {
+                "day_number": 1,
+                "date": "2024-01-01",
+                "pois": [
+                    {
+                        "id": "p1", 
+                        "name": "The Bund", 
+                        "category": "Culture", 
+                        "coords": [121.48, 31.23], 
+                        "img": "https://placehold.co/600x400", 
+                        "time_slot": "09:00 - 10:00", 
+                        "vibe": "Historic",
+                        "priority": "high",
+                        "intensity": "normal",
+                        "visit_duration": 60
+                    }
+                ]
+            }
         ],
-        accommodation=Accommodation(
-            name="Test Hotel",
-            price_per_night=150.0,
-            status="Test",
-            img="https://example.com/hotel.jpg",
-            coords=(139.7, 35.68),
-        ),
-    )
-
-
-# ── Helper ──
-
-async def run_agent(message: str, trip: Trip) -> dict:
-    """Run the agent with a message and trip, return final state."""
-    initial_state = {
-        "messages": [HumanMessage(content=message)],
-        "trip": trip,
-        "next_node": None,
-        "plan": None,
-        "current_step": 0,
-        "critique": "",
-        "iteration_count": 0,
-        "last_agent": None,
-        "pending_changes": None,
+        "accommodation": {
+            "name": "Peace Hotel",
+            "price_per_night": 300,
+            "status": "Found",
+            "img": "https://placehold.co/600x400",
+            "coords": [121.48, 31.24]
+        }
     }
-    return await app.ainvoke(initial_state)
+    
+    file_path = TRIPS_DIR / f"{MOCK_TRIP_ID}.json"
+    with open(file_path, "w") as f:
+        json.dump(trip_data, f)
+        
+    yield
 
-
-# ============================================================================
-# TESTS
-# ============================================================================
-
-class TestChitChat:
-    """Test that chitchat routes correctly."""
-
-    @pytest.mark.asyncio
-    async def test_greeting(self, sample_trip):
-        result = await run_agent("Hello!", sample_trip)
-        final_msg = result["messages"][-1].content
-        assert final_msg  # Should have some response
-        print(f"Chitchat response: {final_msg}")
-
-
-class TestDeletePOI:
-    """Test deleting POIs."""
-
-    @pytest.mark.asyncio
-    async def test_delete_by_name(self, sample_trip):
-        result = await run_agent("Remove the ramen shop", sample_trip)
-        trip = result["trip"]
-
-        # poi_2 should be gone
-        all_poi_ids = [p.id for d in trip.days for p in d.pois]
-        assert "poi_2" not in all_poi_ids, f"poi_2 should be deleted. Remaining: {all_poi_ids}"
-        print(f"Delete response: {result['messages'][-1].content}")
-
-
-class TestMovePOI:
-    """Test moving POIs between days."""
-
-    @pytest.mark.asyncio
-    async def test_move_to_different_day(self, sample_trip):
-        result = await run_agent("Move the garden to Day 2", sample_trip)
-        trip = result["trip"]
-
-        # poi_3 should be on Day 2 now
-        day2_ids = [p.id for p in trip.days[1].pois]
-        assert "poi_3" in day2_ids, f"poi_3 should be on Day 2. Day 2 POIs: {day2_ids}"
-        print(f"Move response: {result['messages'][-1].content}")
-
-
-class TestOptimize:
-    """Test trip optimization."""
-
-    @pytest.mark.asyncio
-    async def test_optimize_trip(self, sample_trip):
-        result = await run_agent("Optimize my trip route", sample_trip)
-        trip = result["trip"]
-
-        # Trip should still have all POIs (just reordered)
-        all_pois = [p.id for d in trip.days for p in d.pois]
-        assert len(all_pois) == 5, f"Should still have 5 POIs after optimization. Got: {len(all_pois)}"
-        print(f"Optimize response: {result['messages'][-1].content}")
-
-
-class TestReplanDay:
-    """Test replanning a single day."""
-
-    @pytest.mark.asyncio
-    async def test_replan_day(self, sample_trip):
-        result = await run_agent("Replan Day 1 for a better schedule", sample_trip)
-        trip = result["trip"]
-
-        # Day 1 should still have 3 POIs
-        assert len(trip.days[0].pois) == 3
-        print(f"Replan response: {result['messages'][-1].content}")
-        print(f"New order: {[p.name for p in trip.days[0].pois]}")
+def test_chat_interaction(page: Page):
+    # 1. Open App directly to trip
+    page.goto(f"http://localhost:8080/?trip={MOCK_TRIP_ID}")
+    print(f"Page Title: {page.title()}")
+    
+    # 2. Verify Trip Loaded
+    # Expect trip content to be visible (e.g. Header)
+    # page.get_by_text("Test Chat Trip") might be in the header title
+    expect(page.get_by_text("Test Chat Trip").first).to_be_visible(timeout=15000)
+    
+    # 3. Open Chat (Floating Button)
+    # The button is fixed bottom-6 right-6
+    # It might take a moment to appear
+    chat_btn = page.locator("button.fixed.bottom-6.right-6")
+    expect(chat_btn).to_be_visible(timeout=5000)
+    chat_btn.click()
+    
+    # 4. Check Input
+    chat_input = page.get_by_placeholder("Ask anything about your trip...")
+    expect(chat_input).to_be_visible()
+    
+    # 5. Send Message
+    chat_input.fill("Hello, finding any errors?")
+    # Send button is next to input with Send icon
+    page.locator("button:has(svg.lucide-send)").click()
+    
+    # 6. Verify Response
+    # Wait for a bot message (Bot icon)
+    # The user message appears immediately (User icon)
+    # The bot message appears after API call
+    
+    # We can check for the Bot icon appearing in the message list
+    # Initially there might be 0 or 1 (welcome message?) 
+    # Let's count them or wait for new text.
+    
+    # Wait for *any* text response that is not our own
+    expect(page.locator("svg.lucide-bot").last).to_be_visible(timeout=30000)
+    
+    # Optional: Print the text for debugging
+    # The text is in a sibling div to the icon container
+    # .flex.items-end.gap-2 > div.bg-secondary > p
+    last_bot_msg = page.locator("div.bg-secondary p").last
+    print(f"Bot says: {last_bot_msg.text_content()}")
+    
+    # Ensure it's not empty
+    expect(last_bot_msg).not_to_be_empty()

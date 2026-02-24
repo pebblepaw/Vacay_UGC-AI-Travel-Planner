@@ -15,6 +15,14 @@ logger = logging.getLogger(__name__)
 
 @tool
 def delete_poi(poi_id: str) -> str: 
+    """Remove a Point of Interest from the trip by its ID.
+
+    Use the POI IDs visible in the trip context (e.g. 'poi_1', 'poi_3').
+    The POI will be removed from whichever day it belongs to.
+
+    Args:
+        poi_id: The ID of the POI to remove (e.g. 'poi_2')
+    """
     # Execution handled by travel_tool_executor
     return f"delete_poi called with {poi_id}"
 
@@ -24,12 +32,27 @@ def add_poi(
     name: str, 
     category: str, 
     longitude: float,
+    latitude: float,
     time_slot: str, 
     vibe: str,
     priority: str = "normal",
     intensity: str = "normal",
     visit_duration: int = 60, 
 ) -> str: 
+    """Add a new Point of Interest to a specific day of the trip.
+
+    Args:
+        day_number: Which day to add to (e.g. 1, 2, 3)
+        name: Name of the place (e.g. 'Tsukiji Outer Market')
+        category: One of: Food, Art, Nature, Culture, Shopping, Nightlife
+        longitude: Longitude coordinate
+        latitude: Latitude coordinate
+        time_slot: Time range (e.g. '12:00 - 13:30')
+        vibe: Description of why this place is worth visiting
+        priority: 'high', 'normal', or 'low'
+        intensity: 'high', 'normal', or 'low' (energy level required)
+        visit_duration: Estimated visit time in minutes
+    """
     
     return f"add_poi called: {name} on Day {day_number}" 
 
@@ -159,15 +182,15 @@ async def search_places(query: str) -> str:
     try: 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                 "https://api.tavily.com/search",
-                 json={
-                      "api_key": settings.TAVLY_API,
-                      "query": query, 
-                      "search_depth": "basic",
-                      "include_images": True, 
-                      "max_results": 5
-                 },
-                 time_out = 15.0
+                "https://api.tavily.com/search",
+                json={
+                    "api_key": settings.TAVLY_API,
+                    "query": query, 
+                    "search_depth": "basic",
+                    "include_images": True, 
+                    "max_results": 5
+                },
+                timeout=15.0
             )
 
         if response.status_code == 200:
@@ -204,7 +227,7 @@ async def search_places(query: str) -> str:
             return json.dumps({"error": f"All search providers failed: {e}"})
     
     if not results: 
-        return json.dumps({"results": [], "message": "No results found"}))
+        return json.dumps({"results": [], "message": "No results found"})
 
     # Step 3: Geocode each result with Nominatim 
 
@@ -264,7 +287,7 @@ def haversine_km(coord1: tuple[float,float], coord2: tuple[float,float]) -> floa
     a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
     c = 2 * asin(sqrt(a)) 
     km = 6371 * c
-    
+
     return km
         
     

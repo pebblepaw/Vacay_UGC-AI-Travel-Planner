@@ -58,11 +58,13 @@ temp/
 *.log
 
 # Documentation
+docs/
 BRD.md
 PROGRESS.md
 QUICKSTART.md
 Demo/*
 !Demo/VACAY_DEMO_1.mp4
-!*.md/README.md
+*.md
+!README.md
 
 

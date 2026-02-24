@@ -30,15 +30,6 @@ from backend.agent.tools.trip_tools import (
     optimize_trip,
 )
 
-llm = ChatGoogleGenerativeAI(
-    model = settings.GEMINI_MODEL, 
-    api_key = settings.GEMINI_API_KEY, 
-    temperature=0
-)
-
-tools = [delete_poi, add_poi, swap_poi, move_poi, replan_day, optimize_trip]
-llm_with_tools = llm.bind_tools(tools)
-
 def _format_trip_with_ids(trip) -> str:
     """Format trip for LLM context. Same as orchestrator version."""
     if not trip:
@@ -67,6 +58,17 @@ def travel_editor_node(state: AgentState) -> dict:
     4. Any critique feedback from previous iterations
     5. The message history (including previous tool results)
     """
+
+    llm = ChatGoogleGenerativeAI(
+        model = settings.GEMINI_MODEL, 
+        api_key = settings.GEMINI_API_KEY, 
+        temperature=0
+    )
+
+    tools = [delete_poi, add_poi, swap_poi, move_poi, replan_day, optimize_trip]
+    llm_with_tools = llm.bind_tools(tools)
+
+
     trip = state.get("trip")
     plan = state.get("plan", [])
     current_step = state.get("current_step", 0)
@@ -84,21 +86,21 @@ def travel_editor_node(state: AgentState) -> dict:
     # Build the system message with trip context
     system_content = f"""You are the Travel Editor agent. You modify trip itineraries using tools.
 
-CURRENT TRIP:
-{trip_context}
+    CURRENT TRIP:
+    {trip_context}
 
-YOUR TASK: {instruction}
+    YOUR TASK: {instruction}
 
-{f"CRITIC FEEDBACK (address this): {critique}" if critique else ""}
+    {f"CRITIC FEEDBACK (address this): {critique}" if critique else ""}
 
-GUIDELINES:
-- Use POI IDs from the trip context above (e.g., poi_1, poi_2) when calling delete_poi, swap_poi, or move_poi.
-- After deleting or adding POIs, consider calling replan_day to fix the schedule.
-- When adding a POI, you MUST provide coordinates. If you don't know exact coords, estimate based on the area.
-- For category, use exactly one of: Food, Art, Nature, Culture, Shopping, Nightlife.
-- For priority/intensity, use exactly one of: high, normal, low.
-- If the task requires information you don't have (like specific restaurant coords), say so — the orchestrator will route to search_agent first.
-- When you're done making changes, respond with a summary of what you did. Do NOT call any more tools."""
+    GUIDELINES:
+    - Use POI IDs from the trip context above (e.g., poi_1, poi_2) when calling delete_poi, swap_poi, or move_poi.
+    - After deleting or adding POIs, consider calling replan_day to fix the schedule.
+    - When adding a POI, you MUST provide coordinates. If you don't know exact coords, estimate based on the area.
+    - For category, use exactly one of: Food, Art, Nature, Culture, Shopping, Nightlife.
+    - For priority/intensity, use exactly one of: high, normal, low.
+    - If the task requires information you don't have (like specific restaurant coords), say so — the orchestrator will route to search_agent first.
+    - When you're done making changes, respond with a summary of what you did. Do NOT call any more tools."""
 
     # Use the message history so the LLM sees previous tool results in this loop
     # But replace/add the system message with updated trip context
@@ -111,3 +113,4 @@ GUIDELINES:
         "messages": [response],
         "last_agent": "travel_editor",
     }
+
