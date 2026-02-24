@@ -107,7 +107,12 @@ def travel_editor_node(state: AgentState) -> dict:
     system_msg = SystemMessage(content=system_content)
 
     # Invoke the LLM with tools
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+    _log.info(f">>> TRAVEL_EDITOR NODE entered, instruction={instruction}, msg_count={len(messages)}")
     response = llm_with_tools.invoke([system_msg] + list(messages))
+    has_tools = bool(getattr(response, 'tool_calls', None))
+    _log.info(f">>> TRAVEL_EDITOR done, has_tool_calls={has_tools}, tool_names={[tc['name'] for tc in (response.tool_calls or [])]}")
 
     return {
         "messages": [response],

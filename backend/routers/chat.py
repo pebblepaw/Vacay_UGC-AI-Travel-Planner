@@ -44,7 +44,10 @@ async def send_chat_message(trip_id: str, request: ChatRequest):
 
         # .ainvoke = asynchronously invoke, i.e. runs until 
         # it hits END or an interrupt
-        result = await app.ainvoke(initial_state)
+        result = await app.ainvoke(
+            initial_state,
+            config={"recursion_limit": 50},
+        )
 
         # ── Extract results ──
         final_messages = result.get("messages", [])
@@ -80,8 +83,11 @@ async def send_chat_message(trip_id: str, request: ChatRequest):
             timestamp=datetime.now()
         )
         
-        # Return both messages
-        return ChatResponse(messages=[user_message, agent_message])
+        # Return both messages + updated trip
+        return ChatResponse(
+            messages=[user_message, agent_message],
+            updated_trip=updated_trip,
+        )
         
     except HTTPException:
             raise  # Re-raise HTTP errors as-is

@@ -124,3 +124,4 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     """Response from chat endpoint."""
     messages: list[ChatMessage]
+    updated_trip: Optional[Trip] = None

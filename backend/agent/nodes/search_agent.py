@@ -66,8 +66,13 @@ def search_agent_node(state: AgentState) -> dict:
     - When you have results, summarize the top 3-5 options for the user.
     - If coordinates are available, mention them so they can be used with add_poi or swap_poi later."""
 
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+    _log.info(f">>> SEARCH_AGENT NODE entered, instruction={instruction}")
     system_msg = SystemMessage(content=system_content)
     response = llm_with_tools.invoke([system_msg] + list(messages))
+    has_tools = bool(getattr(response, 'tool_calls', None))
+    _log.info(f">>> SEARCH_AGENT done, has_tool_calls={has_tools}, content_len={len(response.content or '')}")
 
     return {
         "messages": [response],

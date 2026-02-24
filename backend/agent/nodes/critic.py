@@ -42,6 +42,11 @@ critic_prompt = ChatPromptTemplate.from_template("""You are a Trip Critic. You r
     5. EMPTY DAYS: Is any day now empty (0 POIs)?
     6. DESTRUCTIVE: Were more than 2 POIs deleted, or does any day have only 1 POI left?
 
+    IMPORTANT: If the LAST AGENT was the 'search_agent', the purpose was only to FIND information.
+    Search steps do NOT modify the trip — they gather data for a later editing step.
+    For search-only steps, ALWAYS approve unless the search returned no useful results.
+    Do NOT say 'revise' because the trip wasn't modified during a search step.
+
     Return ONLY a JSON object:
     {{
         "decision": "approve" | "revise" | "confirm",
@@ -85,6 +90,9 @@ def _extract_recent_actions(messages) -> str:
 
 def critic_node(state: AgentState) -> dict:
     """Critic: validates trip modifications and decides approve/revise/confirm."""
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+    _log.info(f">>> CRITIC NODE entered, iteration_count={state.get('iteration_count', 0)}")
 
     llm = ChatGoogleGenerativeAI(
         model=settings.GEMINI_MODEL,
@@ -116,6 +124,8 @@ def critic_node(state: AgentState) -> dict:
             user_request = msg.content
             break
 
+    last_agent = state.get("last_agent", "")
+
     try:
         result = chain.invoke({
             "trip_context": trip_context,
@@ -126,6 +136,14 @@ def critic_node(state: AgentState) -> dict:
         decision = result.get("decision", "approve")
         reasoning = result.get("reasoning", "")
         suggestions = result.get("suggestions", "")
+
+        # Auto-approve search-only steps — the critic shouldn't revise
+        # because searching doesn't modify the trip
+        if last_agent == "search_agent" and decision == "revise":
+            _log.info(f">>> CRITIC overriding revise→approve for search step")
+            decision = "approve"
+
+        _log.info(f">>> CRITIC decision={decision}, reasoning={reasoning[:100]}")
 
         critique_text = ""
         if decision == "revise":

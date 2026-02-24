@@ -7,6 +7,7 @@ from pathlib import Path
 import logging
 from typing import Optional
 import json
+import re
 
 from backend.config import settings
 from backend.models.schemas import GeminiAnalysisResult
@@ -106,21 +107,39 @@ If the video is not travel-related, return: {"city": null, "locations": [], "act
             # Parse JSON response
             result_text = response.text.strip()
             
-            # Remove markdown code blocks if present
-            if result_text.startswith("```json"):
-                result_text = result_text[7:]
-            if result_text.startswith("```"):
-                result_text = result_text[3:]
-            if result_text.endswith("```"):
-                result_text = result_text[:-3]
-            result_text = result_text.strip()
+            # Extract JSON from the response — Gemini often wraps it in
+            # markdown fences and/or adds preamble text like "Here's the JSON:"
+            # Strategy: try raw parse first, then regex-extract from code fences,
+            # then look for the first { ... } block.
+            data = None
             
-            # Parse JSON
+            # Attempt 1: direct parse (clean response)
             try:
                 data = json.loads(result_text)
             except json.JSONDecodeError:
+                pass
+            
+            # Attempt 2: extract from ```json ... ``` or ``` ... ``` fences
+            if data is None:
+                fence_match = re.search(r'```(?:json)?\s*\n?(.*?)```', result_text, re.DOTALL)
+                if fence_match:
+                    try:
+                        data = json.loads(fence_match.group(1).strip())
+                    except json.JSONDecodeError:
+                        pass
+            
+            # Attempt 3: find the outermost { ... } block
+            if data is None:
+                brace_start = result_text.find('{')
+                brace_end = result_text.rfind('}')
+                if brace_start != -1 and brace_end > brace_start:
+                    try:
+                        data = json.loads(result_text[brace_start:brace_end + 1])
+                    except json.JSONDecodeError:
+                        pass
+            
+            if data is None:
                 logger.warning(f"Failed to parse Gemini response as JSON: {result_text[:200]}")
-                # Return empty result
                 data = {
                     "city": None,
                     "locations": [],

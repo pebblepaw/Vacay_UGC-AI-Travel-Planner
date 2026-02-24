@@ -32,6 +32,7 @@ export interface ChatResponse {
     options?: any[];
     status?: string;
   }>;
+  updated_trip?: any;
 }
 
 /**

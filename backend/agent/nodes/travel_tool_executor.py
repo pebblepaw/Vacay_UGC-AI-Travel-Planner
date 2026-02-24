@@ -23,6 +23,7 @@ from math import radians, cos, sin, asin, sqrt
 from langchain_core.messages import ToolMessage
 from backend.models.schemas import Trip, POI, Day
 from backend.agent.state import AgentState
+from duckduckgo_search import DDGS
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,27 @@ TIME_BLOCKS = [
 # Intensity ordering for balancing (lower = place earlier after high-intensity)
 INTENSITY_SCORE = {"high": 3, "normal": 2, "low": 1}
 
+def _fetch_image(place_name: str) -> str:
+    """Fetch a real image for a place using DuckDuckGo image search.
+    Falls back to loremflickr placeholder if search fails."""
+    try:
+        query = f"{place_name} travel landmark"
+        with DDGS() as ddgs:
+            results = list(ddgs.images(
+                keywords=query, max_results=1,
+                safesearch="on", size="Medium", type_image="photo",
+            ))
+            if results:
+                img_url = results[0].get("image")
+                if img_url:
+                    return img_url
+    except Exception as e:
+        logger.warning(f"Image search failed for '{place_name}': {e}")
+    # Fallback
+    query = place_name.replace(" ", ",").replace("'", "").lower()[:50]
+    return f"https://loremflickr.com/800/600/{query},travel"
+
+
 def travel_tool_executor(state: AgentState) -> dict: 
     '''
     In Graph: 
@@ -60,6 +82,7 @@ def travel_tool_executor(state: AgentState) -> dict:
         dict with 'messages' (ToolMessages) and 'trip' (Updated Trip)
     '''
 
+    logger.info(f">>> TRAVEL_TOOL_EXECUTOR entered")
     last_message = state["messages"][-1]
     trip = state["trip"]
 
@@ -116,6 +139,20 @@ def travel_tool_executor(state: AgentState) -> dict:
         
         tool_messages.append(ToolMessage(content=msg, tool_call_id=call_id))
 
+    # ── Cleanup: remove empty days and renumber ──
+    non_empty_days = [d for d in updated_trip.days if d.pois]
+    if len(non_empty_days) < len(updated_trip.days):
+        removed_count = len(updated_trip.days) - len(non_empty_days)
+        updated_trip.days = non_empty_days
+        for i, day in enumerate(updated_trip.days):
+            day.day_number = i + 1
+        tool_messages.append(
+            ToolMessage(
+                content=f"Cleaned up {removed_count} empty day(s). Trip now has {len(updated_trip.days)} days.",
+                tool_call_id=call_id,  # Attach to last tool call
+            )
+        )
+
     return {'messages':tool_messages, 'trip':updated_trip}
 
 
@@ -152,12 +189,13 @@ def _execute_add(trip: Trip, args: dict) -> tuple[Trip, str]:
         new_id = f"poi_{uuid.uuid4().hex[:6]}"
 
     # Create the POI
+    img_url = _fetch_image(args["name"])
     new_poi = POI(
         id=new_id,
         name=args["name"],
         category=args["category"],
         coords=(args["longitude"], args["latitude"]),
-        img=args.get("img", f"https://loremflickr.com/800/600/{args['name'].replace(' ', ',')},travel"),
+        img=args.get("img", img_url),
         time_slot=args["time_slot"],
         vibe=args["vibe"],
         priority=args.get("priority", "normal"),
@@ -186,9 +224,7 @@ def _execute_swap(trip: Trip, args: dict) -> tuple[Trip, str]:
                     name=args["new_name"],
                     category=args["new_category"],
                     coords=(args["new_longitude"], args["new_latitude"]),
-                    # Free placeholder images
-                    # **Link to duckduckgo search later
-                    img=args.get("new_img", f"https://loremflickr.com/800/600/{args['new_name'].replace(' ', ',')},travel"),
+                    img=args.get("new_img", _fetch_image(args["new_name"])),
                     time_slot=args.get("new_time_slot", poi.time_slot),
                     vibe=args["new_vibe"],
                     priority=args.get("new_priority", "normal"),
@@ -313,16 +349,30 @@ def _execute_replan_day(trip: Trip, day_number: int) -> tuple[Trip, str]:
                     ordered[i + 1], ordered[j] = ordered[j], ordered[i + 1]
                     break
 
-    # ── Step 4: Assign new time_slots ──
+    # ── Step 4: Assign new time_slots and travel_times ──
     current_time_minutes = 9 * 60  # Start at 09:00
-    for poi in ordered:
+    for idx, poi in enumerate(ordered):
         start_h, start_m = divmod(current_time_minutes, 60)
         end_minutes = current_time_minutes + poi.visit_duration
         end_h, end_m = divmod(end_minutes, 60)
         poi.time_slot = f"{start_h:02d}:{start_m:02d} - {end_h:02d}:{end_m:02d}"
 
-        # Add 30 min transit buffer between POIs
-        current_time_minutes = end_minutes + 30
+        # Compute travel_time to the NEXT POI using haversine
+        if idx < len(ordered) - 1:
+            dist_km = haversine_km(poi.coords, ordered[idx + 1].coords)
+            if dist_km < 1.5:
+                poi.travel_time = f"🚶 {max(5, int(dist_km * 15))} min walk"
+                transit_minutes = max(10, int(dist_km * 15))
+            elif dist_km < 10:
+                poi.travel_time = f"🚃 {max(10, int(dist_km * 3))} min train"
+                transit_minutes = max(15, int(dist_km * 3))
+            else:
+                poi.travel_time = f"🚗 {max(15, int(dist_km * 1.5))} min drive"
+                transit_minutes = max(20, int(dist_km * 1.5))
+            current_time_minutes = end_minutes + transit_minutes
+        else:
+            poi.travel_time = None  # Last POI of the day
+            current_time_minutes = end_minutes + 30
 
     target_day.pois = ordered
 
@@ -368,6 +418,9 @@ def _execute_optimize_trip(trip: Trip) -> tuple[Trip, str]:
     # ── Step 2: Geographic clustering (simple k-means-ish) ──
     clusters = _geographic_cluster(all_pois, num_days)
 
+    # ── Step 2b: Balance clusters so no day is overloaded ──
+    clusters = _balance_clusters(clusters)
+
     # ── Step 3: Assign clusters to days ──
     for day in trip.days:
         cluster_idx = day.day_number - 1  # 0-indexed
@@ -376,11 +429,16 @@ def _execute_optimize_trip(trip: Trip) -> tuple[Trip, str]:
         else:
             day.pois = pinned[day.day_number]
 
-    # ── Step 4: Replan each day ──
+    # ── Step 4: Remove empty days and renumber ──
+    trip.days = [d for d in trip.days if d.pois]
+    for i, day in enumerate(trip.days):
+        day.day_number = i + 1
+
+    # ── Step 5: Replan each day ──
     for day in trip.days:
         trip, _ = _execute_replan_day(trip, day.day_number)
 
-    return trip, f"Optimized trip across {num_days} days. POIs reassigned by geography and replanned."
+    return trip, f"Optimized trip across {len(trip.days)} days. POIs reassigned by geography and replanned."
 
 def _geographic_cluster(pois: list[POI], k: int) -> list[list[POI]]:
     """Simple geographic clustering: assign POIs to k groups based on proximity.
@@ -428,6 +486,47 @@ def _geographic_cluster(pois: list[POI], k: int) -> list[list[POI]]:
         clusters[nearest_idx].append(poi)
 
     return clusters
+
+
+def _balance_clusters(clusters: list[list[POI]]) -> list[list[POI]]:
+    """Rebalance clusters so no day is overloaded while others are starved.
+
+    Moves POIs from the largest cluster to the smallest, picking the POI
+    geographically closest to the target cluster's centroid. Stops when
+    the difference between largest and smallest is <= 1.
+    """
+    if not clusters or len(clusters) <= 1:
+        return clusters
+
+    def _centroid(pois: list[POI]) -> tuple[float, float]:
+        if not pois:
+            return (0.0, 0.0)
+        avg_lon = sum(p.coords[0] for p in pois) / len(pois)
+        avg_lat = sum(p.coords[1] for p in pois) / len(pois)
+        return (avg_lon, avg_lat)
+
+    max_iterations = 50  # Safety bound
+    for _ in range(max_iterations):
+        sizes = [len(c) for c in clusters]
+        max_size = max(sizes)
+        min_size = min(sizes)
+        if max_size - min_size <= 1:
+            break
+
+        biggest_idx = sizes.index(max_size)
+        smallest_idx = sizes.index(min_size)
+
+        # Pick POI from biggest that is closest to smallest's centroid
+        target_centroid = _centroid(clusters[smallest_idx])
+        best_poi = min(
+            clusters[biggest_idx],
+            key=lambda p: haversine_km(p.coords, target_centroid),
+        )
+        clusters[biggest_idx].remove(best_poi)
+        clusters[smallest_idx].append(best_poi)
+
+    return clusters
+
 
 def haversine_km(coord1: tuple[float, float], coord2: tuple[float, float]) -> float:
     """Distance in km between two (longitude, latitude) points."""

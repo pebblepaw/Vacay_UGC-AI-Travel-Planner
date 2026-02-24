@@ -81,9 +81,21 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId }) 
     // Add user message
     addChatMessage({ type: 'user', content });
 
+    // Show thinking indicator immediately
+    const thinkingId = `msg_thinking_${Date.now()}`;
+    setChatMessages(prev => [...prev, {
+      id: thinkingId,
+      type: 'agent' as const,
+      content: '⏳ Working on it...',
+      timestamp: new Date(),
+    }]);
+
     try {
       // Call backend API
       const response = await sendChatMessage(trip.trip_id, content);
+
+      // Remove thinking message
+      setChatMessages(prev => prev.filter(m => m.id !== thinkingId));
       
       // Add agent response(s)
       response.messages.forEach((msg) => {
@@ -94,8 +106,14 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId }) 
           });
         }
       });
+
+      // Update trip state if backend returned changes
+      if (response.updated_trip) {
+        setTrip(response.updated_trip);
+      }
     } catch (error) {
-      // Fallback to error message
+      // Remove thinking message and show error
+      setChatMessages(prev => prev.filter(m => m.id !== thinkingId));
       addChatMessage({
         type: 'agent',
         content: "Sorry, I'm having trouble connecting right now. Please try again.",

@@ -29,6 +29,11 @@ def _format_trip_summary(trip) -> str:
 
 def response_formatter_node(state: AgentState) -> dict:
     """Format the final response and check if there are more plan steps."""
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+    plan = state.get("plan", [])
+    current_step = state.get("current_step", 0)
+    _log.info(f">>> FORMATTER NODE entered, plan={plan}, current_step={current_step}")
 
     messages = state["messages"]
     trip = state.get("trip")
@@ -48,9 +53,12 @@ def response_formatter_node(state: AgentState) -> dict:
 
     if has_more_steps:
         # More steps to execute — route back to orchestrator
+        _log.info(f">>> FORMATTER: more steps, advancing to step {next_step}")
         return {
             "current_step": next_step,
             "next_node": "continue_plan",  # Signal to graph router
+            "iteration_count": 0,  # Reset critic counter for new step
+            "critique": "",  # Clear stale critique
         }
 
     # ── Final response: format with trip summary ──

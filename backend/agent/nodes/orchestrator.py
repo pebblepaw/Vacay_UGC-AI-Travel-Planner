@@ -94,6 +94,9 @@ def _format_trip_with_ids(trip) -> str:
     return "\n".join(lines)
 
 def orchestrator_node(state: AgentState) -> dict: 
+    import logging
+    _log = logging.getLogger(__name__)
+    _log.info(">>> ORCHESTRATOR NODE entered")
 
     llm = ChatGoogleGenerativeAI(
         model=settings.GEMINI_MODEL,
@@ -141,6 +144,7 @@ def orchestrator_node(state: AgentState) -> dict:
             "critique": critique or "None",
         })
 
+        _log.info(f">>> ORCHESTRATOR plan={result.get('plan')}, next={result['next_node']}")
         return {
             "next_node": result["next_node"],
             "plan": result.get("plan", [last_msg]),
