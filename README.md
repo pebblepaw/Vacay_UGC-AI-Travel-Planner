@@ -15,10 +15,10 @@ VACAY is an AI-powered travel planner that takes short-form travel videos (TikTo
 <video src="https://github.com/user-attachments/assets/862660d9-cfae-4a80-ba3c-4c1583b5342c" width="320" height="240" controls></video>
 
 ## Core Flow
-<img width="1024" height="1024" alt="00_user_flow" src="https://github.com/user-attachments/assets/9cd9a14e-d761-44d3-94a8-930695550633" />
+<img width="400" height="1024" alt="00_user_flow" src="https://github.com/user-attachments/assets/9cd9a14e-d761-44d3-94a8-930695550633" />
 
 ## Agentic Chat LangGraph Design
-<img width="1024" height="1024" alt="02_langgraph_agent_loop" src="https://github.com/user-attachments/assets/2ed434e7-f157-415c-8e60-b8b193b338c6" />
+<img width="400" height="1024" alt="02_langgraph_agent_loop" src="https://github.com/user-attachments/assets/2ed434e7-f157-415c-8e60-b8b193b338c6" />
 
 ## Quick Start
 
@@ -97,7 +97,7 @@ npm test
 ```
 
 ## Tech Stack
-<img width="1024" height="1024" alt="01_system_architecture" src="https://github.com/user-attachments/assets/db373942-773e-4aed-b169-1f85d300b1c6" />
+<img width="400" height="1024" alt="01_system_architecture" src="https://github.com/user-attachments/assets/db373942-773e-4aed-b169-1f85d300b1c6" />
 
 **Frontend**
 - React 18 + TypeScript
