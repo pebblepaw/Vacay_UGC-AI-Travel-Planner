@@ -4,6 +4,17 @@
 
 VACAY is an AI-powered travel planner that takes short-form travel videos (TikTok, YouTube Shorts) and automatically extracts locations, creates day-by-day itineraries, and displays them on an interactive map.
 
+## Table of Contents
+
+1. [Key Features](#-Features)  
+2. [Demo Video](#-Demo-Video)  
+3. [Quick Start](#-Quick-Start)
+4. [Project Structure](#-Project-Structure)
+5. [Tests](#-Testing)
+6. [Architectural Diagrams](#-Architectural-Diagrams)
+7. [Tech Stack](#-Tech-Stack)
+---
+
 ## Features
 
 - **Video Processing**: Paste a TikTok URL and watch as AI extracts all the travel spots
@@ -13,12 +24,6 @@ VACAY is an AI-powered travel planner that takes short-form travel videos (TikTo
 
 ## Demo Video
 <video src="https://github.com/user-attachments/assets/862660d9-cfae-4a80-ba3c-4c1583b5342c" width="320" height="240" controls></video>
-
-## Core Flow
-<img width="400" height="1024" alt="00_user_flow" src="https://github.com/user-attachments/assets/9cd9a14e-d761-44d3-94a8-930695550633" />
-
-## Agentic Chat LangGraph Design
-<img width="400" height="1024" alt="02_langgraph_agent_loop" src="https://github.com/user-attachments/assets/2ed434e7-f157-415c-8e60-b8b193b338c6" />
 
 ## Quick Start
 
@@ -61,7 +66,7 @@ VACAY is an AI-powered travel planner that takes short-form travel videos (TikTo
    - Frontend: http://localhost:5173
    - API Docs: http://localhost:8000/docs
 
-## Required API Keys
+### Required API Keys
 
 | Service | Purpose | Get it at |
 |---------|---------|-----------|
@@ -96,8 +101,24 @@ cd frontend
 npm test
 ```
 
+----
+
+## Architectural Diagrams
+
+**Overview**
+
+<img width="400" height="1024" alt="00_user_flow" src="https://github.com/user-attachments/assets/9cd9a14e-d761-44d3-94a8-930695550633" />
+
+
+**Agentic Chat LangGraph Design**
+
+<img width="400" height="1024" alt="02_langgraph_agent_loop" src="https://github.com/user-attachments/assets/2ed434e7-f157-415c-8e60-b8b193b338c6" />
+
+---
+
 ## Tech Stack
 <img width="400" height="1024" alt="01_system_architecture" src="https://github.com/user-attachments/assets/db373942-773e-4aed-b169-1f85d300b1c6" />
+
 
 **Frontend**
 - React 18 + TypeScript
