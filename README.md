@@ -6,14 +6,13 @@ VACAY is an AI-powered travel planner that takes short-form travel videos (TikTo
 
 ## Table of Contents
 
-1. [Key Features](#-Features)  
-2. [Demo Video](#-Demo-Video)  
-3. [Quick Start](#-Quick-Start)
-4. [Project Structure](#-Project-Structure)
-5. [Tests](#-Testing)
-6. [Architectural Diagrams](#-Architectural-Diagrams)
-7. [Tech Stack](#-Tech-Stack)
----
+1. [Key Features](#features)  
+2. [Demo Video](#demo-video)  
+3. [Quick Start](#quick-start)
+4. [Project Structure](#project-structure)
+5. [Tests](#testing)
+6. [Architectural Diagrams](#architectural-diagrams)
+7. [Tech Stack](#tech-stack)
 
 ## Features
 
@@ -101,8 +100,6 @@ cd frontend
 npm test
 ```
 
-----
-
 ## Architectural Diagrams
 
 **Overview**
@@ -114,7 +111,6 @@ npm test
 
 <img width="400" height="1024" alt="02_langgraph_agent_loop" src="https://github.com/user-attachments/assets/2ed434e7-f157-415c-8e60-b8b193b338c6" />
 
----
 
 ## Tech Stack
 <img width="400" height="1024" alt="01_system_architecture" src="https://github.com/user-attachments/assets/db373942-773e-4aed-b169-1f85d300b1c6" />
