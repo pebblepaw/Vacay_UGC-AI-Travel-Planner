@@ -93,7 +93,9 @@ class ChatMessage(BaseModel):
     type: Literal['user', 'agent', 'interrupt']
     content: str
     timestamp: datetime
-    interrupt_type: Optional[Literal['hotel_selection', 'poi_selection', 'confirmation']] = None
+    interrupt_type: Optional[
+        Literal['hotel_selection', 'poi_selection', 'confirmation', 'open_url']
+    ] = None
     options: Optional[list[ChatOption]] = None
     status: Optional[Literal['pending', 'approved', 'rejected']] = None
 

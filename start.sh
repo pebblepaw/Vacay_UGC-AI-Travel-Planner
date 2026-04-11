@@ -9,6 +9,8 @@ if [ ! -f .env ]; then
     echo "❌ Error: .env file not found!"
     echo "   Please create .env with your API keys:"
     echo "   GEMINI_API_KEY=..."
+    echo "   DASHSCOPE_API_KEY=..."
+    echo "   AGENT_LLM_PROVIDER=aliyun"
     echo "   TAVLY_API=..."
     echo "   MAPBOX_PUBLIC=..."
     echo "   MAPBOX_SECRET=..."

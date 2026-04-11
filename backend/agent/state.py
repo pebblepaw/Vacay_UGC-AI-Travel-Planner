@@ -41,3 +41,19 @@ class AgentState(TypedDict):
     # routing control — set by orchestrator, critic, formatter
     # to tell the graph router which node to go to next
     next_node: Optional[str]
+
+    # booking workflow state
+    # carries structured context extracted during booking steps
+    booking_context: Optional[dict]
+
+    # normalized booking candidates discovered by browser-use stage
+    booking_offers: Optional[List[dict]]
+
+    # user/agent selected offer from booking_offers
+    selected_offer: Optional[dict]
+
+    # result returned by checkout runner (pre-payment)
+    booking_result: Optional[dict]
+
+    # UI interrupt payload (optional)
+    chat_interrupt: Optional[dict]

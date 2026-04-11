@@ -17,11 +17,11 @@ PLAN-AND-EXECUTE pattern example:
 """
 
 from backend.agent import state
+import re
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
-from langchain_google_genai import ChatGoogleGenerativeAI
-from backend.config import settings
 from backend.agent.state import AgentState
+from backend.llm import get_agent_llm
 
 orchestrator_prompt = ChatPromptTemplate.from_template("""
                                                         
@@ -29,7 +29,8 @@ orchestrator_prompt = ChatPromptTemplate.from_template("""
 
     1. 'travel_editor' — Modifies the trip itinerary (add, delete, swap, move POIs; replan a day; optimize the trip)
     2. 'search_agent' — Searches the web for places, restaurants, activities (use when the user wants to FIND something NEW)
-    3. 'chitchat' — Handles greetings, thank-yous, off-topic questions
+    3. 'booking_agent' — Handles booking workflows (find offers, select offer, proceed to checkout confirmation page)
+    4. 'chitchat' — Handles greetings, thank-yous, off-topic questions
 
     CURRENT TRIP:
     {trip_context}
@@ -61,12 +62,14 @@ orchestrator_prompt = ChatPromptTemplate.from_template("""
     - Simple requests have 1 step. Example: "Remove the ramen" → ["delete the ramen POI"]
     - Complex requests need multiple steps. Example: "Replace ramen with sushi" → ["search for sushi restaurants near Shinjuku Tokyo", "swap poi_2 with the best sushi result"]
     - If the user just wants to chat or says hello → single step routed to chitchat
+    - If the user asks to book tickets/hotels/transport, route to booking_agent
+    - If the user asks for flight options on trip.com, ALWAYS route to booking_agent (not search_agent)
     - When searching, ALWAYS include the city/area in the search query
     - If a critique was provided, adjust your plan to address it
 
     Return ONLY a JSON object:
     {{
-        "next_node": "travel_editor" | "search_agent" | "chitchat",
+        "next_node": "travel_editor" | "search_agent" | "booking_agent" | "chitchat",
         "plan": ["step 1 description", "step 2 description", ...],
         "current_step_instruction": "The specific instruction for the agent handling this step"
     }}
@@ -75,6 +78,8 @@ orchestrator_prompt = ChatPromptTemplate.from_template("""
     - User: "Hello!" → {{"next_node": "chitchat", "plan": ["greet user"], "current_step_instruction": "Say hello and offer help with the trip"}}
     - User: "Delete TeamLab" → {{"next_node": "travel_editor", "plan": ["delete TeamLab Borderless"], "current_step_instruction": "Delete the POI named TeamLab Borderless (poi_1)"}}
     - User: "Find me a good sushi place" → {{"next_node": "search_agent", "plan": ["search for sushi restaurants"], "current_step_instruction": "Search for highly-rated sushi restaurants in Tokyo"}}
+    - User: "Book a train from Tokyo to Osaka next Friday" → {{"next_node": "booking_agent", "plan": ["find train offers from Tokyo to Osaka for next Friday", "select best-value offer and proceed to checkout confirmation"], "current_step_instruction": "Find train offers from Tokyo to Osaka for next Friday with 1 adult"}}
+    - User: "List flights from Tokyo to Shanghai on trip.com" → {{"next_node": "booking_agent", "plan": ["find flight offers from Tokyo to Shanghai on trip.com"], "current_step_instruction": "Find flight offers on trip.com"}}
     - User: "Replace ramen with something fancier" → {{"next_node": "search_agent", "plan": ["search for upscale restaurants near Shinjuku Tokyo", "swap the ramen POI with the best result"], "current_step_instruction": "Search for upscale restaurants near Shinjuku Tokyo"}}
     - User: "Optimize my trip" → {{"next_node": "travel_editor", "plan": ["optimize the full trip"], "current_step_instruction": "Run optimize_trip to rebalance POIs across days by geography"}}
     - [After search results showed restaurant options] User: "Let's go with Cafe 12" → {{"next_node": "travel_editor", "plan": ["add Cafe 12 to the itinerary"], "current_step_instruction": "Add a new POI named 'Cafe 12' with category 'Food' to Day 1 at time '12:00 - 13:30'. Coordinates from search: longitude=2.3522, latitude=48.8566. Use add_poi tool. Do NOT ask the user any questions."}}
@@ -113,11 +118,7 @@ def orchestrator_node(state: AgentState) -> dict:
     _log = logging.getLogger(__name__)
     _log.info(">>> ORCHESTRATOR NODE entered")
 
-    llm = ChatGoogleGenerativeAI(
-        model=settings.GEMINI_MODEL,
-        api_key=settings.GEMINI_API_KEY,
-        temperature=0
-    )
+    llm = get_agent_llm(temperature=0)
 
     chain = orchestrator_prompt | llm | JsonOutputParser() 
 
@@ -133,8 +134,10 @@ def orchestrator_node(state: AgentState) -> dict:
         step_instruction = plan[current_step]
 
         # Decide which agent handles this step
-        # Simple heuristic: if the step mentions "search"/"find" → search_agent, else → travel_editor
-        if any(kw in step_instruction.lower() for kw in ["search", "find", "look for"]):
+        lowered = step_instruction.lower()
+        if any(kw in lowered for kw in ["book", "booking", "checkout", "ticket", "hotel", "flight", "train"]):
+            next_node = "booking_agent"
+        elif any(kw in lowered for kw in ["search", "find", "look for"]):
             next_node = "search_agent"
         else:
             next_node = "travel_editor"
@@ -146,8 +149,50 @@ def orchestrator_node(state: AgentState) -> dict:
             "critique": "",  # Clear critique when advancing
         }
 
-    # ── New request or first step: ask LLM to plan ──
+    # ── New request or first step: short-circuit booking queries ──
     last_msg = messages[-1].content
+    lowered_msg = last_msg.lower()
+    booking_keywords = [
+        "book",
+        "booking",
+        "ticket",
+        "flight",
+        "train",
+        "hotel",
+        "trip.com",
+        "tripcom",
+        "机票",
+        "订票",
+        "航班",
+        "单程",
+        "往返",
+        "经济舱",
+        "商务舱",
+        "头等舱",
+        "机场",
+    ]
+    has_option_id = bool(re.search(r"\boffer_\d+\b|option_id\s*:\s*offer_\d+", last_msg, re.IGNORECASE))
+    has_booking_context = bool(state.get("booking_context") or state.get("booking_offers"))
+    has_booking_history = any(
+        isinstance(m.content, str)
+        and re.search(r"offer_\d+|可选航班|请选择一个航班|option_id", m.content, re.IGNORECASE)
+        for m in messages[-10:]
+    )
+    if (
+        has_option_id
+        or has_booking_context
+        or has_booking_history
+        or any(k in lowered_msg or k in last_msg for k in booking_keywords)
+    ):
+        return {
+            "next_node": "booking_agent",
+            "plan": [f"find booking options on trip.com for: {last_msg}"],
+            "current_step": 0,
+            "critique": "",
+            "iteration_count": 0,
+        }
+
+    # ── New request or first step: ask LLM to plan ──
     trip_str = _format_trip_with_ids(trip)
 
     # Build history with role labels so LLM can track the conversation

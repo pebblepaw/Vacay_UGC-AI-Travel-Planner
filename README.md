@@ -69,6 +69,7 @@ VACAY is an AI-powered travel planner that takes short-form travel videos (TikTo
 
 | Service | Purpose | Get it at |
 |---------|---------|-----------|
+| DashScope / Qwen | Agent chat and planning | [Alibaba Cloud DashScope](https://dashscope.console.aliyun.com/) |
 | Gemini | Video analysis | [Google AI Studio](https://aistudio.google.com/) |
 | Tavily | Location search | [Tavily](https://tavily.com/) |
 | Mapbox | Maps | [Mapbox](https://mapbox.com/) |

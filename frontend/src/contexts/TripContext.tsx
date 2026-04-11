@@ -148,6 +148,19 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId }) 
             content: msg.content,
           });
         }
+        if (msg.type === 'interrupt') {
+          if (msg.interrupt_type === 'open_url' && msg.content) {
+            window.open(msg.content, '_blank', 'noopener,noreferrer');
+            return;
+          }
+          addChatMessage({
+            type: 'interrupt',
+            content: msg.content,
+            interrupt_type: msg.interrupt_type,
+            options: msg.options,
+            status: msg.status,
+          });
+        }
       });
 
       // Update trip state if backend returned changes
@@ -165,6 +178,7 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId }) 
   }, [addChatMessage, trip.trip_id]);
 
   const handleInterruptAction = useCallback((messageId: string, action: 'approve' | 'reject', optionId?: string) => {
+    const target = chatMessagesRef.current.find(msg => msg.id === messageId);
     setChatMessages(prev => prev.map(msg => {
       if (msg.id === messageId) {
         return { ...msg, status: action === 'approve' ? 'approved' : 'rejected' };
@@ -172,7 +186,13 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId }) 
       return msg;
     }));
 
-    // Add follow-up message
+    const targetText = target?.content || '';
+    const looksLikeBooking = /航班|机票|订票|trip\.com/i.test(targetText);
+    if (action === 'approve' && optionId && (target?.interrupt_type === 'confirmation' || looksLikeBooking)) {
+      sendUserMessage(`option_id: ${optionId}`);
+      return;
+    }
+
     setTimeout(() => {
       if (action === 'approve' && optionId) {
         addChatMessage({
@@ -186,7 +206,7 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId }) 
         });
       }
     }, 500);
-  }, [addChatMessage]);
+  }, [addChatMessage, sendUserMessage]);
 
   return (
     <TripContext.Provider
