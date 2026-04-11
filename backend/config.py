@@ -14,10 +14,15 @@ class Settings(BaseSettings):
     
     # API Keys
     GEMINI_API_KEY: str
+    DASHSCOPE_API_KEY: Optional[str] = None
     TAVLY_API: str
     MAPBOX_PUBLIC: str
     MAPBOX_SECRET: str
     GEMINI_MODEL: str = "gemini-2.0-flash"
+    DASHSCOPE_MODEL: str = "qwen2.5-vl-3b-instruct"
+    DASHSCOPE_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    AGENT_LLM_PROVIDER: str = "aliyun"
+    BOOKING_STRICT_REAL_TRIP: bool = True
     
     # Supabase
     SUPABASE_PROJECT_URL: str

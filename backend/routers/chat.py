@@ -11,7 +11,11 @@ import uuid
 
 from backend.models.schemas import ChatRequest, ChatResponse, ChatMessage, Trip
 from backend.storage.supabase_storage import supabase_storage as storage
-from backend.agent.graph import app 
+from backend.agent.graph import app
+
+
+# In-memory booking context cache (per trip) for follow-up selections.
+_BOOKING_SESSION: dict[str, dict] = {}
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +42,11 @@ async def send_chat_message(trip_id: str, request: ChatRequest):
                 elif h.get("role") == "agent":
                     history_messages.append(AIMessage(content=h["content"]))
 
+        if _should_reset_booking(request.message):
+            _BOOKING_SESSION.pop(trip_id, None)
+
+        cached = _BOOKING_SESSION.get(trip_id) or {}
+
         # Prepare input for LangGraph
         initial_state = {
             "messages": history_messages + [HumanMessage(content=request.message)],
@@ -49,6 +58,10 @@ async def send_chat_message(trip_id: str, request: ChatRequest):
             "iteration_count": 0,
             "last_agent": None,
             "pending_changes": None,
+            "booking_context": cached.get("booking_context"),
+            "booking_offers": cached.get("booking_offers"),
+            "selected_offer": cached.get("selected_offer"),
+            "booking_result": cached.get("booking_result"),
         }
 
         # .ainvoke = asynchronously invoke, i.e. runs until 
@@ -61,6 +74,14 @@ async def send_chat_message(trip_id: str, request: ChatRequest):
         # ── Extract results ──
         final_messages = result.get("messages", [])
         updated_trip = result.get("trip")
+        chat_interrupt = result.get("chat_interrupt")
+
+        _BOOKING_SESSION[trip_id] = {
+            "booking_context": result.get("booking_context"),
+            "booking_offers": result.get("booking_offers"),
+            "selected_offer": result.get("selected_offer"),
+            "booking_result": result.get("booking_result"),
+        }
 
         # Find the last AI message (the response to show the user)
         final_content = "I'm not sure how to help with that."
@@ -91,10 +112,26 @@ async def send_chat_message(trip_id: str, request: ChatRequest):
             content=final_content,
             timestamp=datetime.now()
         )
+
+        interrupt_message = None
+        if isinstance(chat_interrupt, dict):
+            interrupt_message = ChatMessage(
+                id=f"msg_{uuid.uuid4().hex[:8]}",
+                type="interrupt",
+                content=str(chat_interrupt.get("content") or ""),
+                timestamp=datetime.now(),
+                interrupt_type=chat_interrupt.get("interrupt_type"),
+                options=chat_interrupt.get("options"),
+                status=chat_interrupt.get("status"),
+            )
         
         # Return both messages + updated trip
+        response_messages = [user_message, agent_message]
+        if interrupt_message:
+            response_messages.append(interrupt_message)
+
         return ChatResponse(
-            messages=[user_message, agent_message],
+            messages=response_messages,
             updated_trip=updated_trip,
         )
         
@@ -103,6 +140,21 @@ async def send_chat_message(trip_id: str, request: ChatRequest):
     except Exception as e:
         logger.error(f"Error in chat for trip {trip_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Agent error: {str(e)}")
+
+
+def _should_reset_booking(message: str) -> bool:
+    lowered = (message or "").lower()
+    keywords = [
+        "reset booking",
+        "clear booking",
+        "reset order",
+        "clear order",
+        "重置订票",
+        "清空订票",
+        "重置订单",
+        "清空订单",
+    ]
+    return any(k in lowered for k in keywords)
 
 
 # def _generate_mock_response(user_message: str, trip) -> str:

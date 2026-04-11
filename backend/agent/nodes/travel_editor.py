@@ -17,9 +17,7 @@ and trip context.
 """
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage
-from backend.config import settings
 from backend.agent.state import AgentState
 from backend.agent.tools.trip_tools import (
     delete_poi,
@@ -29,6 +27,7 @@ from backend.agent.tools.trip_tools import (
     replan_day,
     optimize_trip,
 )
+from backend.llm import get_agent_llm
 
 def _format_trip_with_ids(trip) -> str:
     """Format trip for LLM context. Same as orchestrator version."""
@@ -59,11 +58,7 @@ def travel_editor_node(state: AgentState) -> dict:
     5. The message history (including previous tool results)
     """
 
-    llm = ChatGoogleGenerativeAI(
-        model = settings.GEMINI_MODEL, 
-        api_key = settings.GEMINI_API_KEY, 
-        temperature=0
-    )
+    llm = get_agent_llm(temperature=0)
 
     tools = [delete_poi, add_poi, swap_poi, move_poi, replan_day, optimize_trip]
     llm_with_tools = llm.bind_tools(tools)

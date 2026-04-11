@@ -2,9 +2,10 @@
 LangGraph agent orchestration for VACAY trip editing.
 
 GRAPH TOPOLOGY:
-    orchestrator → {travel_editor, search_agent, chitchat}
+    orchestrator → {travel_editor, search_agent, booking_agent, chitchat}
     travel_editor ←→ travel_tool_executor (custom, updates trip in state)
     search_agent  ←→ search_tool_node (standard ToolNode)
+    booking_agent ←→ booking_tool_executor (custom, updates booking state)
     both agents   → critic → {approve→formatter, revise→agent, confirm→human_review}
     formatter     → {orchestrator (if more plan steps), END (if done)}
     chitchat      → END
@@ -27,6 +28,8 @@ from backend.agent.nodes.orchestrator import orchestrator_node
 from backend.agent.nodes.travel_editor import travel_editor_node
 from backend.agent.nodes.travel_tool_executor import travel_tool_executor
 from backend.agent.nodes.search_agent import search_agent_node
+from backend.agent.nodes.booking_agent import booking_agent_node
+from backend.agent.nodes.booking_tool_executor import booking_tool_executor
 from backend.agent.nodes.critic import critic_node
 from backend.agent.nodes.response_formatter import response_formatter_node
 from backend.agent.nodes.human_review import human_review_node
@@ -74,6 +77,16 @@ def search_agent_router(state: AgentState) -> str:
         return "critic"
 
 
+def booking_agent_router(state: AgentState) -> str:
+    """Route from booking agent: tool executor or critic."""
+    last_message = state["messages"][-1]
+
+    if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+        return "booking_tools"
+    else:
+        return "critic"
+
+
 def critic_router(state: AgentState) -> str:
     """Route from critic based on its decision."""
     decision = state.get("next_node", "approve")
@@ -111,6 +124,8 @@ workflow.add_node("travel_editor", travel_editor_node)
 workflow.add_node("travel_tools", travel_tool_executor)      # Custom executor
 workflow.add_node("search_agent", search_agent_node)
 workflow.add_node("search_tools", search_tool_node)           # Standard ToolNode
+workflow.add_node("booking_agent", booking_agent_node)
+workflow.add_node("booking_tools", booking_tool_executor)
 workflow.add_node("critic", critic_node)
 workflow.add_node("response_formatter", response_formatter_node)
 workflow.add_node("human_review", human_review_node)
@@ -126,6 +141,7 @@ workflow.add_conditional_edges(
     {
         "travel_editor": "travel_editor",
         "search_agent": "search_agent",
+        "booking_agent": "booking_agent",
         "chitchat": "chitchat",
     },
 )
@@ -155,6 +171,17 @@ workflow.add_conditional_edges(
 )
 workflow.add_edge("search_tools", "search_agent")  # Loop: ToolNode → agent
 
+# ── Booking Agent tool loop ──
+workflow.add_conditional_edges(
+    "booking_agent",
+    booking_agent_router,
+    {
+        "booking_tools": "booking_tools",
+        "critic": "critic",
+    },
+)
+workflow.add_edge("booking_tools", "booking_agent")
+
 # ── Critic → routing ──
 workflow.add_conditional_edges(
     "critic",
@@ -163,6 +190,7 @@ workflow.add_conditional_edges(
         "response_formatter": "response_formatter",
         "travel_editor": "travel_editor",
         "search_agent": "search_agent",
+        "booking_agent": "booking_agent",
         "human_review": "human_review",
     },
 )

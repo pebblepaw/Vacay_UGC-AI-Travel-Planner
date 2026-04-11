@@ -51,7 +51,7 @@ export interface ChatMessage {
   type: 'user' | 'agent' | 'interrupt';
   content: string;
   timestamp: Date;
-  interrupt_type?: 'hotel_selection' | 'poi_selection' | 'confirmation';
+  interrupt_type?: 'hotel_selection' | 'poi_selection' | 'confirmation' | 'open_url';
   options?: ChatOption[];
   status?: 'pending' | 'approved' | 'rejected';
 }

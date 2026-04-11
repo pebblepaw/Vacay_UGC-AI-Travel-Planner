@@ -11,10 +11,9 @@ FLOW:
 """
 
 from langchain_core.messages import SystemMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
-from backend.config import settings
 from backend.agent.state import AgentState
 from backend.agent.tools.trip_tools import search_places
+from backend.llm import get_agent_llm
 # from langchain_core.messages import AIMessage
 
 def _get_trip_city(trip) -> str:
@@ -28,11 +27,7 @@ def _get_trip_city(trip) -> str:
 def search_agent_node(state: AgentState) -> dict:
     """Search agent: finds places using Tavily + geocoding."""
 
-    llm = ChatGoogleGenerativeAI(
-        model=settings.GEMINI_MODEL,
-        api_key=settings.GEMINI_API_KEY,
-        temperature = 0,
-    )
+    llm = get_agent_llm(temperature=0)
 
     tools = [search_places]
     llm_with_tools = llm.bind_tools(tools)

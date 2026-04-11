@@ -19,9 +19,8 @@ DECISIONS:
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
-from langchain_google_genai import ChatGoogleGenerativeAI
-from backend.config import settings
 from backend.agent.state import AgentState
+from backend.llm import get_agent_llm
 
 critic_prompt = ChatPromptTemplate.from_template("""You are a Trip Critic. You review modifications made to a travel itinerary and check for issues.
 
@@ -94,11 +93,7 @@ def critic_node(state: AgentState) -> dict:
     _log = _logging.getLogger(__name__)
     _log.info(f">>> CRITIC NODE entered, iteration_count={state.get('iteration_count', 0)}")
 
-    llm = ChatGoogleGenerativeAI(
-        model=settings.GEMINI_MODEL,
-        api_key=settings.GEMINI_API_KEY,
-        temperature=0,
-    )
+    llm = get_agent_llm(temperature=0)
 
     chain = critic_prompt | llm | JsonOutputParser()
 

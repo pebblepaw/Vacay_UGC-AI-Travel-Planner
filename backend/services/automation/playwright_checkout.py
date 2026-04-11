@@ -1,0 +1,657 @@
+"""Playwright checkout runner.
+
+Moves from selected offer deeplink to a pre-payment confirmation page.
+Never clicks final payment.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from pathlib import Path
+import re
+from typing import Any
+
+
+class PlaywrightCheckoutRunner:
+    """Automates deterministic checkout steps with Playwright."""
+
+    def __init__(self, artifacts_dir: str = "backend/data/booking_artifacts"):
+        self.artifacts_dir = Path(artifacts_dir)
+        self.artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    async def checkout_to_confirmation(
+        self,
+        offer: dict[str, Any],
+        traveler: dict[str, str],
+        headless: bool = True,
+        skip_fill: bool = False,
+    ) -> dict[str, Any]:
+        """Open checkout and fill traveler details until confirmation page.
+
+        Returns screenshot path and status metadata.
+        """
+        try:
+            from playwright.async_api import async_playwright
+        except Exception as exc:
+            return {
+                "status": "failed",
+                "reason": f"Playwright not installed: {exc}",
+                "confirmation_url": "",
+                "screenshot": "",
+            }
+
+        deeplink = offer.get("deeplink", "")
+        if not deeplink:
+            return {
+                "status": "failed",
+                "reason": "Selected offer has no deeplink.",
+                "confirmation_url": "",
+                "screenshot": "",
+            }
+        is_results_deeplink = self._is_results_page(deeplink)
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=headless)
+            page = await browser.new_page()
+            try:
+                await page.goto(deeplink, wait_until="domcontentloaded", timeout=45000)
+
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                before_path = self.artifacts_dir / f"checkout_before_{timestamp}.png"
+                await page.screenshot(path=str(before_path), full_page=True)
+
+                provider = str(offer.get("provider") or "")
+                if self._is_trip_provider(provider, deeplink):
+                    if is_results_deeplink:
+                        await self._trip_select_offer_on_results(page, offer)
+                    await self._trip_checkout_flow(page, traveler, skip_fill=skip_fill)
+                else:
+                    await self._handle_cookie_banner(page)
+                    await self._progress_to_checkout_step(page)
+                    if not skip_fill:
+                        await self._fill_traveler_form(page, traveler)
+
+                # Save state right before potential payment step.
+                after_path = self.artifacts_dir / f"checkout_pre_payment_{timestamp}.png"
+                await page.screenshot(path=str(after_path), full_page=True)
+
+                if self._is_results_page(page.url):
+                    return {
+                        "status": "failed",
+                        "reason": "Still on search results page; checkout form not reached.",
+                        "confirmation_url": page.url,
+                        "screenshot": str(after_path),
+                        "artifacts": [str(before_path), str(after_path)],
+                    }
+
+                result_status = "needs_user_payment"
+                result_reason = "Reached pre-payment stage. Final payment is intentionally not clicked."
+                if skip_fill:
+                    result_status = "needs_user_input"
+                    result_reason = "Reached traveler info page. Please fill manually in the browser."
+
+                result = {
+                    "status": result_status,
+                    "reason": result_reason,
+                    "confirmation_url": page.url,
+                    "screenshot": str(after_path),
+                    "artifacts": [str(before_path), str(after_path)],
+                }
+                if not headless:
+                    if skip_fill:
+                        result["reason"] = (
+                            "Reached traveler info page. Browser left open for user input."
+                        )
+                    else:
+                        result["reason"] = (
+                            "Reached pre-payment stage. Browser left open for user review. "
+                            "Final payment is intentionally not clicked."
+                        )
+                return result
+            finally:
+                if headless:
+                    await browser.close()
+
+    def _is_trip_provider(self, provider: str, deeplink: str) -> bool:
+        haystack = f"{provider} {deeplink}".lower()
+        return "trip.com" in haystack or re.search(r"(^|\.)trip\.com", haystack) is not None
+
+    def _is_results_page(self, url: str) -> bool:
+        lowered = (url or "").lower()
+        if "/flights/passenger" in lowered:
+            return False
+        if "showfarefirst" in lowered:
+            return True
+        if "/flights/?" in lowered or "/flights/" in lowered and "triptype" in lowered:
+            return True
+        return False
+
+    async def _trip_handle_baggage(self, page: Any) -> None:
+        """Select default baggage and continue if baggage step is shown."""
+        try:
+            await page.wait_for_timeout(800)
+        except Exception:
+            pass
+        try:
+            title = (await page.title()) or ""
+        except Exception:
+            title = ""
+
+        text_markers = ["Baggage", "行李", "luggage"]
+        is_baggage_step = any(marker.lower() in title.lower() for marker in text_markers)
+
+        if not is_baggage_step:
+            try:
+                page_text = await page.content()
+                is_baggage_step = any(marker.lower() in page_text.lower() for marker in text_markers)
+            except Exception:
+                is_baggage_step = False
+
+        if not is_baggage_step:
+            return
+
+        try:
+            radio = page.locator("input[type='radio']")
+            if await radio.count() > 0:
+                await radio.first.check(timeout=2000)
+        except Exception:
+            pass
+
+        await self._click_first_available(
+            page,
+            [
+                ("role", "Continue"),
+                ("role", "Next"),
+                ("role", "Confirm"),
+                ("role", "下一步"),
+                ("role", "继续"),
+                ("role", "确认"),
+                ("css", "button:has-text('Continue')"),
+                ("css", "button:has-text('Confirm')"),
+            ],
+        )
+        await page.wait_for_timeout(1200)
+
+    async def _trip_select_offer_on_results(self, page: Any, offer: dict[str, Any]) -> None:
+        """Select a specific offer card on Trip.com results page."""
+        selector = offer.get("card_selector") or ""
+        if selector:
+            try:
+                card = page.locator(selector)
+                if await card.count() > 0:
+                    await card.first.scroll_into_view_if_needed()
+                    btn = card.locator(
+                        "button:has-text('Select'), a:has-text('Select'), button:has-text('Book'), "
+                        "button:has-text('Continue'), button:has-text('立即预订'), button:has-text('预订')"
+                    )
+                    if await btn.count() > 0:
+                        await btn.first.click(timeout=3000)
+                        await self._wait_for_checkout_start(page)
+                        return
+            except Exception:
+                pass
+
+        offer_id = str(offer.get("id") or "")
+        index_match = re.search(r"offer_(\d+)", offer_id)
+        target_index = int(index_match.group(1)) - 1 if index_match else 0
+        selectors = [
+            "button:has-text('Select')",
+            "a:has-text('Select')",
+            "button:has-text('Book')",
+        ]
+        for sel in selectors:
+            try:
+                btns = page.locator(sel)
+                if await btns.count() > 0:
+                    target = btns.nth(target_index if target_index >= 0 else 0)
+                    await target.scroll_into_view_if_needed()
+                    await target.click(timeout=3000)
+                    await self._wait_for_checkout_start(page)
+                    return
+            except Exception:
+                continue
+
+    async def _wait_for_checkout_start(self, page: Any) -> None:
+        """Wait briefly for checkout form to appear or URL to change."""
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=8000)
+        except Exception:
+            pass
+        selectors = [
+            "input[name*='name']",
+            "input[name*='passenger']",
+            "input[name*='contact']",
+            "input[placeholder*='Name']",
+            "input[placeholder*='姓名']",
+        ]
+        for sel in selectors:
+            try:
+                await page.wait_for_selector(sel, timeout=3000)
+                return
+            except Exception:
+                continue
+        await page.wait_for_timeout(1200)
+
+    async def _trip_checkout_flow(
+        self, page: Any, traveler: dict[str, str], skip_fill: bool = False
+    ) -> None:
+        """Trip.com-specific pre-payment automation.
+
+        This flow intentionally stops before payment submission.
+        """
+        await self._handle_cookie_banner(page)
+
+        # Trip pages often lazy-render; wait briefly for CTA hydration.
+        await page.wait_for_timeout(1500)
+
+        # Step 1: enter booking flow.
+        await self._click_first_available(
+            page,
+            [
+                ("role", "Book now"),
+                ("role", "Select"),
+                ("role", "Reserve"),
+                ("role", "Continue"),
+                ("role", "Book"),
+                ("role", "立即预订"),
+                ("role", "预订"),
+                ("css", "button[data-testid*='book']"),
+                ("css", "button[data-testid*='select']"),
+                ("css", "button[data-testid*='reserve']"),
+                ("css", "button:has-text('Book')"),
+                ("css", "button:has-text('Select')"),
+            ],
+        )
+        await page.wait_for_timeout(1200)
+
+        # Step 1.5: handle baggage selection if present.
+        await self._trip_handle_baggage(page)
+
+        # Step 2: fill traveler/contact details.
+        if skip_fill:
+            return
+        await self._fill_traveler_form(page, traveler)
+
+        # Step 3: proceed to confirmation step, but DO NOT click pay.
+        await self._click_first_available(
+            page,
+            [
+                ("role", "Continue"),
+                ("role", "Next"),
+                ("role", "Review"),
+                ("role", "下一步"),
+                ("role", "继续"),
+                ("css", "button[data-testid*='continue']"),
+                ("css", "button:has-text('Continue')"),
+            ],
+        )
+        await page.wait_for_timeout(1500)
+
+    async def _handle_cookie_banner(self, page: Any) -> None:
+        """Best-effort cookie banner dismissal for common provider pages."""
+        texts = [
+            "Accept",
+            "Accept all",
+            "I agree",
+            "Allow all",
+            "同意",
+            "全部接受",
+        ]
+        for text in texts:
+            try:
+                btn = page.get_by_role("button", name=text)
+                if await btn.count() > 0:
+                    await btn.first.click(timeout=1200)
+                    return
+            except Exception:
+                continue
+
+    async def _progress_to_checkout_step(self, page: Any) -> None:
+        """Click common CTA buttons to move from offer page to traveler form.
+
+        This is provider-agnostic and safe: all clicks are best effort.
+        """
+        ctas = [
+            "Book",
+            "Book now",
+            "Continue",
+            "Select",
+            "Reserve",
+            "下一步",
+            "继续",
+            "立即预订",
+            "预订",
+        ]
+        for text in ctas:
+            try:
+                btn = page.get_by_role("button", name=text)
+                if await btn.count() > 0:
+                    await btn.first.click(timeout=1800)
+                    await page.wait_for_timeout(1200)
+            except Exception:
+                continue
+
+    async def _fill_traveler_form(self, page: Any, traveler: dict[str, str]) -> None:
+        """Fill common traveler/contact fields until confirmation page.
+
+        Uses multiple selectors per field to tolerate provider differences.
+        """
+        full_name = traveler.get("name", "").strip()
+        first_name, last_name = self._split_name(full_name)
+
+        await self._try_fill(
+            page,
+            [
+                "input[name='fullName']",
+                "input[name='contactName']",
+                "input[name='passengerName']",
+                "input[name='name']",
+                "input[id*='name']",
+                "input[placeholder*='Name']",
+                "input[placeholder*='姓名']",
+            ],
+            full_name,
+        )
+        await self._try_fill(
+            page,
+            [
+                "input[name*='first']",
+                "input[name*='given']",
+                "input[id*='first']",
+                "input[id*='given']",
+                "input[id*='first']",
+                "input[placeholder*='First']",
+                "input[placeholder*='Given']",
+                "input[placeholder*='Given name']",
+                "input[placeholder*='名']",
+            ],
+            first_name,
+        )
+        await self._try_fill(
+            page,
+            [
+                "input[name*='last']",
+                "input[name*='surname']",
+                "input[id*='last']",
+                "input[id*='surname']",
+                "input[id*='last']",
+                "input[placeholder*='Last']",
+                "input[placeholder*='Family']",
+                "input[placeholder*='Surname']",
+                "input[placeholder*='姓']",
+            ],
+            last_name,
+        )
+        await self._try_fill(
+            page,
+            [
+                "input[type='email']",
+                "input[name='email']",
+                "input[name='contactEmail']",
+                "input[id*='email']",
+                "input[placeholder*='Email']",
+                "input[placeholder*='邮箱']",
+            ],
+            traveler.get("email", ""),
+        )
+        await self._try_fill(
+            page,
+            [
+                "input[name*='contactName']",
+                "input[id*='contactName']",
+                "input[placeholder*='Contact name']",
+                "input[placeholder*='contact name']",
+                "input[placeholder*='联系人']",
+            ],
+            traveler.get("name", ""),
+        )
+        await self._try_fill(
+            page,
+            [
+                "input[type='tel']",
+                "input[name='phone']",
+                "input[name='contactPhone']",
+                "input[id*='phone']",
+                "input[placeholder*='Phone']",
+                "input[placeholder*='手机号']",
+            ],
+            traveler.get("phone", ""),
+        )
+
+        gender = traveler.get("gender", "").strip().lower()
+        if gender:
+            gender_texts = ["Male", "Female", "Other", "男", "女"]
+            if gender.startswith("m"):
+                gender_texts = ["Male", "男"]
+            elif gender.startswith("f"):
+                gender_texts = ["Female", "女"]
+            await self._try_click_label(page, gender_texts)
+
+        birth_date = traveler.get("birth_date", "").strip()
+        if birth_date:
+            await self._try_fill(
+                page,
+                [
+                    "input[name*='birth']",
+                    "input[id*='birth']",
+                    "input[placeholder*='Birth']",
+                    "input[placeholder*='Date of birth']",
+                    "input[type='date']",
+                ],
+                birth_date,
+            )
+            year, month, day = self._split_date(birth_date)
+            if year and month and day:
+                await self._try_select_option(
+                    page,
+                    [
+                        "select[name*='year']",
+                        "select[id*='year']",
+                        "select[aria-label*='Year']",
+                    ],
+                    year,
+                )
+                await self._try_select_option(
+                    page,
+                    [
+                        "select[name*='month']",
+                        "select[id*='month']",
+                        "select[aria-label*='Month']",
+                    ],
+                    month,
+                )
+                await self._try_select_option(
+                    page,
+                    [
+                        "select[name*='day']",
+                        "select[id*='day']",
+                        "select[aria-label*='Day']",
+                    ],
+                    day,
+                )
+
+        nationality = traveler.get("nationality", "").strip()
+        if nationality:
+            await self._try_select_option(
+                page,
+                [
+                    "select[name*='national']",
+                    "select[id*='national']",
+                    "select[aria-label*='Nationality']",
+                ],
+                nationality,
+            )
+            await self._try_fill(
+                page,
+                [
+                    "input[name*='national']",
+                    "input[id*='national']",
+                    "input[placeholder*='Nationality']",
+                    "input[placeholder*='country/region']",
+                    "input[placeholder*='Nationality']",
+                    "input[placeholder*='国籍']",
+                ],
+                nationality,
+            )
+
+        doc_type = traveler.get("doc_type", "").strip()
+        if doc_type:
+            await self._try_select_option(
+                page,
+                [
+                    "select[name*='documentType']",
+                    "select[name*='docType']",
+                    "select[id*='documentType']",
+                    "select[aria-label*='Document']",
+                    "select[aria-label*='证件']",
+                ],
+                doc_type,
+            )
+            await self._try_fill(
+                page,
+                [
+                    "input[placeholder*='ID type']",
+                    "input[placeholder*='Document type']",
+                    "input[placeholder*='证件类型']",
+                ],
+                doc_type,
+            )
+
+        doc_number = traveler.get("doc_number", "").strip()
+        if doc_number:
+            await self._try_fill(
+                page,
+                [
+                    "input[name*='passport']",
+                    "input[name*='documentNumber']",
+                    "input[name*='docNumber']",
+                    "input[id*='passport']",
+                    "input[id*='documentNumber']",
+                    "input[placeholder*='ID number']",
+                    "input[placeholder*='Passport']",
+                    "input[placeholder*='Document']",
+                    "input[placeholder*='证件']",
+                ],
+                doc_number,
+            )
+
+        doc_expiry = traveler.get("doc_expiry", "").strip()
+        if doc_expiry:
+            await self._try_fill(
+                page,
+                [
+                    "input[name*='expiry']",
+                    "input[id*='expiry']",
+                    "input[placeholder*='Expiry']",
+                    "input[placeholder*='Expiration']",
+                    "input[type='date']",
+                ],
+                doc_expiry,
+            )
+
+        # One more non-destructive continue attempt.
+        try:
+            btn = page.get_by_role("button", name="Continue")
+            if await btn.count() > 0:
+                await btn.first.click(timeout=1800)
+        except Exception:
+            pass
+
+    async def _click_first_available(self, page: Any, candidates: list[tuple[str, str]]) -> bool:
+        """Click first matched button from ordered candidates.
+
+        candidate tuple: (kind, value) where kind is 'role' or 'css'.
+        """
+        for kind, value in candidates:
+            try:
+                if kind == "role":
+                    locator = page.get_by_role("button", name=value)
+                else:
+                    locator = page.locator(value)
+
+                if await locator.count() > 0:
+                    await locator.first.click(timeout=2200)
+                    return True
+            except Exception:
+                continue
+        return False
+
+    async def _try_fill(self, page: Any, selectors: list[str], value: str) -> bool:
+        if not value:
+            return False
+        for selector in selectors:
+            try:
+                locator = page.locator(selector)
+                if await locator.count() > 0:
+                    await locator.first.fill(value, timeout=1800)
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def _split_name(self, name: str) -> tuple[str, str]:
+        if not name:
+            return "", ""
+        if re.search(r"[\u4e00-\u9fff]", name) and len(name) >= 2:
+            return name[1:], name[0]
+        parts = [p for p in name.split() if p]
+        if len(parts) >= 2:
+            return parts[0], " ".join(parts[1:])
+        return name, name
+
+    def _split_date(self, value: str) -> tuple[str, str, str]:
+        match = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", value)
+        if not match:
+            return "", "", ""
+        return match.group(1), str(int(match.group(2))), str(int(match.group(3)))
+
+    async def _try_click_label(self, page: Any, labels: list[str]) -> bool:
+        for label in labels:
+            try:
+                locator = page.get_by_label(label)
+                if await locator.count() > 0:
+                    await locator.first.click(timeout=1800)
+                    return True
+            except Exception:
+                pass
+            try:
+                locator = page.get_by_role("radio", name=label)
+                if await locator.count() > 0:
+                    await locator.first.click(timeout=1800)
+                    return True
+            except Exception:
+                pass
+            try:
+                locator = page.locator(f"button:has-text('{label}')")
+                if await locator.count() > 0:
+                    await locator.first.click(timeout=1800)
+                    return True
+            except Exception:
+                continue
+        return False
+
+    async def _try_select_option(self, page: Any, selectors: list[str], value: str) -> bool:
+        if not value:
+            return False
+        for selector in selectors:
+            try:
+                locator = page.locator(selector)
+                if await locator.count() > 0:
+                    await locator.first.select_option(label=value)
+                    return True
+            except Exception:
+                pass
+            try:
+                locator = page.locator(selector)
+                if await locator.count() > 0:
+                    await locator.first.click(timeout=1200)
+                    option = page.locator(f"li:has-text('{value}'), div[role='option']:has-text('{value}')")
+                    if await option.count() > 0:
+                        await option.first.click(timeout=1200)
+                        return True
+            except Exception:
+                continue
+        return False
+
+
+playwright_checkout_runner = PlaywrightCheckoutRunner()
