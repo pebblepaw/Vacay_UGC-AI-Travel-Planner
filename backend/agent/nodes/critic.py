@@ -102,7 +102,7 @@ def critic_node(state: AgentState) -> dict:
     iteration_count = state.get("iteration_count", 0)
 
     # ── Safety: auto-approve after 3 iterations to prevent infinite loops ──
-    if iteration_count >= 3:
+    if iteration_count >= 2:
         return {
             "next_node": "approve",
             "critique": "",
