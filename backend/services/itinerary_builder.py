@@ -5,6 +5,7 @@ Takes Gemini analysis results and builds a complete Trip itinerary.
 import uuid
 from datetime import datetime, timedelta
 import logging
+import re
 from typing import Optional
 
 from backend.models.schemas import (
@@ -51,7 +52,8 @@ class ItineraryBuilderService:
             ))
         
         # Extract city from analysis results
-        city = self._extract_city(analysis_results)
+        scope = self._extract_location_scope(analysis_results)
+        city = str(scope.get("scope_name") or "Unknown City")
         
         # Generate trip title if not provided
         if not trip_title:
@@ -63,7 +65,9 @@ class ItineraryBuilderService:
             all_locations.extend(result.locations)
         
         # Remove duplicates and geocode
-        unique_pois = await self._build_pois_from_locations(all_locations, city)
+        unique_pois = await self._build_pois_from_locations(all_locations, city, scope)
+        if not unique_pois:
+            raise ValueError("No extracted locations could be resolved inside the video's location scope.")
         
         # Organize into days (simple algorithm: ~3-4 POIs per day)
         days = self._organize_into_days(unique_pois)
@@ -83,17 +87,85 @@ class ItineraryBuilderService:
         return trip
     
     def _extract_city(self, analysis_results: list[GeminiAnalysisResult]) -> str:
-        """Extract city name from analysis results."""
+        """Extract a user-facing scope label from analysis results."""
+        return str(self._extract_location_scope(analysis_results).get("scope_name") or "Unknown City")
+
+    def _extract_location_scope(self, analysis_results: list[GeminiAnalysisResult]) -> dict[str, str]:
+        """Resolve the narrowest safe place scope for imported POIs."""
+        city_counts: dict[str, int] = {}
+        country_counts: dict[str, int] = {}
+
         for result in analysis_results:
-            city = result.metadata.get('city')
+            metadata = result.metadata or {}
+            city = str(metadata.get("city") or "").strip()
+            country = str(metadata.get("country") or "").strip()
             if city:
-                return city
-        return "Unknown City"
-    
+                city_counts[city] = city_counts.get(city, 0) + 1
+            if country:
+                country_counts[country] = country_counts.get(country, 0) + 1
+
+        scope_name = max(city_counts, key=city_counts.get) if city_counts else ""
+        country = max(country_counts, key=country_counts.get) if country_counts else ""
+        country_code = tavily_location._country_code_from_hint(country or scope_name) or ""
+        scope_type = "city"
+
+        if not scope_name and country:
+            scope_type = "country"
+            scope_name = country
+        elif self._looks_like_region(scope_name):
+            scope_type = "region"
+        elif country and len(city_counts) > 1:
+            scope_type = "country"
+            scope_name = country
+        elif not country and self._looks_like_country(scope_name):
+            scope_type = "country"
+            country = scope_name
+        elif not scope_name:
+            scope_name = "Unknown City"
+
+        query_parts = [scope_name]
+        if country and country.lower() not in scope_name.lower():
+            query_parts.append(country)
+
+        return {
+            "scope_name": scope_name,
+            "country": country,
+            "country_code": country_code,
+            "scope_type": scope_type,
+            "query_hint": ", ".join(part for part in query_parts if part),
+        }
+
+    def _looks_like_region(self, value: str) -> bool:
+        lowered = value.lower()
+        return any(
+            term in lowered
+            for term in (
+                "lake ",
+                " island",
+                " islands",
+                " region",
+                " province",
+                " coast",
+                " countryside",
+                "district",
+                "county",
+                "bay",
+                "south of",
+                "north of",
+                "east of",
+                "west of",
+            )
+        )
+
+    def _looks_like_country(self, value: str) -> bool:
+        lowered = value.lower()
+        return bool(re.fullmatch(r"[a-z][a-z\s'.-]+", lowered)) and tavily_location._country_code_from_hint(value) is not None
+
     async def _build_pois_from_locations(
         self,
         locations: list[dict],
-        city: str
+        city: str,
+        scope: dict[str, str],
     ) -> list[POI]:
         """Convert location dicts to POI objects with geocoding."""
         pois = []
@@ -107,16 +179,14 @@ class ItineraryBuilderService:
             seen_names.add(name)
             
             # Geocode location
-            geo_data = await tavily_location.geocode_location(name, city)
+            geo_data = await tavily_location.geocode_location(name, scope.get("query_hint") or city, scope=scope)
             
             if not geo_data:
-                logger.warning(f"Could not geocode location: {name}")
-                # Use default coords (city center placeholder)
-                coords = (0.0, 0.0)
-                img_url = await tavily_location.get_place_image(name, city) or ""
+                logger.warning("Dropping unresolved or out-of-scope location: %s", name)
+                continue
             else:
                 coords = tuple(geo_data['coords'])
-                img_url = geo_data.get('img') or await tavily_location.get_place_image(name, city) or ""
+                img_url = geo_data.get('img') or await tavily_location.get_place_image(name, scope.get("query_hint") or city) or ""
             
             # Create POI
             # Map any invalid categories to valid ones

@@ -27,6 +27,7 @@ from backend.agent.tools.trip_tools import (
     replan_day,
     optimize_trip,
 )
+from backend.app_config import get_assistant_language_instruction
 from backend.llm import get_agent_llm
 
 def _format_trip_with_ids(trip) -> str:
@@ -87,6 +88,7 @@ def travel_editor_node(state: AgentState) -> dict:
     YOUR TASK: {instruction}
 
     {f"CRITIC FEEDBACK (address this): {critique}" if critique else ""}
+    {get_assistant_language_instruction()}
 
     GUIDELINES:
     - Use POI IDs from the trip context above (e.g., poi_1, poi_2) when calling delete_poi, swap_poi, or move_poi.

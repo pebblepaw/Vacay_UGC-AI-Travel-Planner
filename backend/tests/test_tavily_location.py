@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
@@ -148,3 +149,91 @@ async def test_geocode_with_mapbox_prefers_public_token_over_secret(
 
     assert result is not None
     assert captured["params"]["access_token"] == "pk.public-test-token"
+
+
+def test_result_within_scope_accepts_chinese_shanghai_match() -> None:
+    service = TavilyLocationService()
+
+    result = {
+        "full_name": "南京西路, 黄浦区, 上海市, 中国",
+        "address": "南京西路, 黄浦区, 上海市, 中国",
+        "country_code": "cn",
+        "country": "中国",
+        "region": "上海市",
+        "locality": "黄浦区",
+    }
+    scope = {
+        "scope_name": "Shanghai",
+        "country": "China",
+        "country_code": "cn",
+        "scope_type": "city",
+        "query_hint": "Shanghai, China",
+    }
+
+    assert service._result_within_scope(result, scope) is True
+
+
+@pytest.mark.asyncio
+async def test_geocode_location_times_out_after_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = TavilyLocationService()
+    service._LOCATION_TIMEOUT_SECONDS = 0.01
+
+    async def slow_geocode(place_name: str, city: str | None = None, scope: dict | None = None) -> dict | None:
+        await asyncio.sleep(0.05)
+        return None
+
+    monkeypatch.setattr(service, "_geocode_location_with_strategies", slow_geocode)
+
+    result = await service.geocode_location("Slow Place", "Shanghai")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_discover_location_candidates_filters_noise_and_caps_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = TavilyLocationService()
+    service.api_key = "test-key"
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict:
+            return {
+                "answer": (
+                    "Located at 1 Bund Road, Shanghai 200002. "
+                    "Opening Hours: 10am to 10pm. "
+                    "Located at 2 Bund Road, Shanghai 200002. "
+                    "Located at 3 Bund Road, Shanghai 200002. "
+                    "Located at 4 Bund Road, Shanghai 200002. "
+                    "Located at 5 Bund Road, Shanghai 200002. "
+                    "Located at 6 Bund Road, Shanghai 200002."
+                ),
+                "results": [],
+            }
+
+    class FakeAsyncClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(tavily_location_module.httpx, "AsyncClient", lambda *args, **kwargs: FakeAsyncClient())
+
+    candidates = await service._discover_location_candidates_with_tavily("Bund", "Shanghai")
+
+    assert candidates == [
+        "1 Bund Road, Shanghai 200002",
+        "2 Bund Road, Shanghai 200002",
+        "3 Bund Road, Shanghai 200002",
+        "4 Bund Road, Shanghai 200002",
+        "5 Bund Road, Shanghai 200002",
+    ]

@@ -53,6 +53,10 @@ TIME_BLOCKS = [
 
 # Intensity ordering for balancing (lower = place earlier after high-intensity)
 INTENSITY_SCORE = {"high": 3, "normal": 2, "low": 1}
+DAY_START_MINUTES = 9 * 60
+DAY_END_MINUTES = (23 * 60) + 59
+LUNCH_WINDOW = (11 * 60 + 30, 14 * 60 + 30)
+DINNER_WINDOW = (18 * 60, 22 * 60)
 
 def _fetch_image(place_name: str) -> str:
     """Fetch a real image for a place using DuckDuckGo image search.
@@ -95,6 +99,53 @@ def _auto_geocode(place_name: str, city_hint: str) -> tuple[float, float] | None
     except Exception as e:
         logger.warning(f"Auto-geocode failed for '{place_name}': {e}")
     return None
+
+
+def _parse_time_slot(value: str) -> tuple[int, int] | None:
+    try:
+        start_raw, end_raw = [part.strip() for part in value.split("-", maxsplit=1)]
+        start_h, start_m = [int(part) for part in start_raw.split(":")]
+        end_h, end_m = [int(part) for part in end_raw.split(":")]
+        return start_h * 60 + start_m, end_h * 60 + end_m
+    except Exception:
+        return None
+
+
+def _format_minutes(total_minutes: int) -> str:
+    hours, minutes = divmod(total_minutes, 60)
+    return f"{hours:02d}:{minutes:02d}"
+
+
+def _meal_anchor_window(poi: POI) -> tuple[int, int] | None:
+    if poi.category != "Food":
+        return None
+    parsed = _parse_time_slot(poi.time_slot or "")
+    if not parsed:
+        return None
+    start, end = parsed
+    if LUNCH_WINDOW[0] <= start <= LUNCH_WINDOW[1]:
+        return LUNCH_WINDOW
+    if DINNER_WINDOW[0] <= start <= DINNER_WINDOW[1]:
+        return DINNER_WINDOW
+    return None
+
+
+def _estimate_transit_minutes(current: POI, next_poi: POI) -> tuple[str, int]:
+    if (current.coords[0] == 0 and current.coords[1] == 0) or \
+       (next_poi.coords[0] == 0 and next_poi.coords[1] == 0):
+        return "🚶 10 min walk", 15
+    dist_km = haversine_km(current.coords, next_poi.coords)
+    if dist_km < 1.5:
+        minutes = max(10, int(dist_km * 15))
+        return f"🚶 {max(5, int(dist_km * 15))} min walk", minutes
+    if dist_km < 10:
+        minutes = max(15, int(dist_km * 3))
+        return f"🚃 {max(10, int(dist_km * 3))} min train", minutes
+    if dist_km < 50:
+        minutes = max(20, int(dist_km * 1.5))
+        return f"🚗 {max(15, int(dist_km * 1.5))} min drive", minutes
+    minutes = min(180, int(dist_km * 1.5))
+    return f"🚗 ~{int(dist_km / 60 * 60)} hr drive", minutes
 
 
 def travel_tool_executor(state: AgentState) -> dict: 
@@ -392,41 +443,38 @@ def _execute_replan_day(trip: Trip, day_number: int) -> tuple[Trip, str]:
                     break
 
     # ── Step 4: Assign new time_slots and travel_times ──
-    current_time_minutes = 9 * 60  # Start at 09:00
+    scheduled_slots: list[tuple[int, int]] = []
+    travel_segments: list[tuple[str, int]] = []
+    current_time_minutes = DAY_START_MINUTES
     for idx, poi in enumerate(ordered):
-        start_h, start_m = divmod(current_time_minutes, 60)
-        end_minutes = current_time_minutes + poi.visit_duration
-        end_h, end_m = divmod(end_minutes, 60)
-        poi.time_slot = f"{start_h:02d}:{start_m:02d} - {end_h:02d}:{end_m:02d}"
+        anchor_window = _meal_anchor_window(poi)
+        if anchor_window:
+            current_time_minutes = max(current_time_minutes, anchor_window[0])
+            if current_time_minutes + poi.visit_duration > anchor_window[1]:
+                return trip, (
+                    f"Day {day_number} is too packed to keep {poi.name} in the requested meal window. "
+                    "Move or remove another stop first."
+                )
 
-        # Compute travel_time to the NEXT POI using haversine
+        end_minutes = current_time_minutes + poi.visit_duration
+        if end_minutes > DAY_END_MINUTES:
+            return trip, (
+                f"Day {day_number} is too packed to fit all stops into real clock time. "
+                "Move or remove another stop first."
+            )
+        scheduled_slots.append((current_time_minutes, end_minutes))
+
         if idx < len(ordered) - 1:
-            next_poi = ordered[idx + 1]
-            # Skip distance calc if either POI has placeholder coords (0,0)
-            if (poi.coords[0] == 0 and poi.coords[1] == 0) or \
-               (next_poi.coords[0] == 0 and next_poi.coords[1] == 0):
-                poi.travel_time = "🚶 10 min walk"
-                transit_minutes = 15
-                current_time_minutes = end_minutes + transit_minutes
-                continue
-            dist_km = haversine_km(poi.coords, next_poi.coords)
-            if dist_km < 1.5:
-                poi.travel_time = f"🚶 {max(5, int(dist_km * 15))} min walk"
-                transit_minutes = max(10, int(dist_km * 15))
-            elif dist_km < 10:
-                poi.travel_time = f"🚃 {max(10, int(dist_km * 3))} min train"
-                transit_minutes = max(15, int(dist_km * 3))
-            elif dist_km < 50:
-                poi.travel_time = f"🚗 {max(15, int(dist_km * 1.5))} min drive"
-                transit_minutes = max(20, int(dist_km * 1.5))
-            else:
-                # Very far — cap at reasonable estimate
-                poi.travel_time = f"🚗 ~{int(dist_km / 60 * 60)} hr drive"
-                transit_minutes = min(180, int(dist_km * 1.5))
+            travel_label, transit_minutes = _estimate_transit_minutes(poi, ordered[idx + 1])
+            travel_segments.append((travel_label, transit_minutes))
             current_time_minutes = end_minutes + transit_minutes
         else:
-            poi.travel_time = None  # Last POI of the day
-            current_time_minutes = end_minutes + 30
+            current_time_minutes = end_minutes
+
+    for idx, poi in enumerate(ordered):
+        start_minutes, end_minutes = scheduled_slots[idx]
+        poi.time_slot = f"{_format_minutes(start_minutes)} - {_format_minutes(end_minutes)}"
+        poi.travel_time = travel_segments[idx][0] if idx < len(travel_segments) else None
 
     target_day.pois = ordered
 

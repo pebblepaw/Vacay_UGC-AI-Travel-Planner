@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { motion } from 'framer-motion';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
@@ -41,6 +41,7 @@ export const MapView = () => {
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<mapboxgl.Marker[]>([]);
   const popupsRef = useRef<mapboxgl.Popup[]>([]);
+  const [mapError, setMapError] = useState<string>('');
 
   const allPOIs = trip.days.flatMap((day) => day.pois);
   const validPOIs = allPOIs.filter(poi => poi.coords[0] !== 0 && poi.coords[1] !== 0);
@@ -67,10 +68,12 @@ export const MapView = () => {
     const mapboxToken = import.meta.env.VITE_MAPBOX_PUBLIC;
     if (!mapboxToken) {
       console.error('Mapbox token not found');
+      setMapError('Mapbox token missing. Set MAPBOX_PUBLIC in .env and restart start.sh.');
       return;
     }
 
     mapboxgl.accessToken = mapboxToken;
+    setMapError('');
 
     const map = new mapboxgl.Map({
       container: mapContainerRef.current,
@@ -81,6 +84,9 @@ export const MapView = () => {
 
     // Add navigation controls
     map.addControl(new mapboxgl.NavigationControl(), 'top-right');
+    map.on('error', () => {
+      setMapError('Mapbox failed to load. Check the frontend token and network access.');
+    });
 
     mapRef.current = map;
 
@@ -221,7 +227,17 @@ export const MapView = () => {
       <div ref={mapContainerRef} className="absolute inset-0" />
 
       {/* Overlay when no geocoded locations */}
-      {!hasValidCoords && (
+      {mapError && (
+        <div className="absolute inset-0 flex items-center justify-center z-20 bg-black/35 backdrop-blur-sm rounded-2xl">
+          <div className="max-w-sm text-center p-6 glass border border-red-400/40">
+            <MapPin className="h-14 w-14 mx-auto mb-4 text-white opacity-80" />
+            <h3 className="text-lg font-semibold text-white">Mapbox token missing</h3>
+            <p className="text-sm text-white/80 mt-2">{mapError}</p>
+          </div>
+        </div>
+      )}
+
+      {!mapError && !hasValidCoords && (
         <div className="absolute inset-0 flex items-center justify-center z-10 bg-black/20 backdrop-blur-sm rounded-2xl">
           <div className="text-center p-8">
             <MapPin className="h-16 w-16 mx-auto mb-4 text-white opacity-70" />

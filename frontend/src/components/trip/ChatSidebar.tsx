@@ -1,11 +1,11 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import { useTripContext } from '@/contexts/TripContext';
 import { ChatMessage, ChatOption } from '@/data/mockData';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { 
@@ -19,6 +19,20 @@ import {
   MessageCircle
 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
+
+const MIN_CHAT_INPUT_HEIGHT = 56;
+const MAX_CHAT_INPUT_HEIGHT = 160;
+
+const adjustTextareaHeight = (textarea: HTMLTextAreaElement | null) => {
+  if (!textarea) {
+    return;
+  }
+
+  textarea.style.height = 'auto';
+  const nextHeight = Math.min(Math.max(textarea.scrollHeight, MIN_CHAT_INPUT_HEIGHT), MAX_CHAT_INPUT_HEIGHT);
+  textarea.style.height = `${nextHeight}px`;
+  textarea.style.overflowY = textarea.scrollHeight > MAX_CHAT_INPUT_HEIGHT ? 'auto' : 'hidden';
+};
 
 const MessageBubble = ({ 
   message, 
@@ -36,8 +50,8 @@ const MessageBubble = ({
         animate={{ opacity: 1, x: 0 }}
         className="flex justify-end mb-4"
       >
-        <div className="flex items-end gap-2 max-w-[80%]">
-          <div className="gradient-bg text-primary-foreground px-4 py-2 rounded-2xl rounded-br-md">
+        <div className="flex items-end gap-2 min-w-0 max-w-[92%] sm:max-w-[80%]">
+          <div className="gradient-bg text-primary-foreground px-4 py-2 rounded-2xl rounded-br-md break-words [overflow-wrap:anywhere] min-w-0">
             <p className="text-sm">{message.content}</p>
           </div>
           <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center shrink-0">
@@ -157,7 +171,7 @@ const MessageBubble = ({
       <div className="w-8 h-8 rounded-full gradient-bg flex items-center justify-center shrink-0 mt-1">
         <Bot className="h-4 w-4 text-primary-foreground" />
       </div>
-      <div className="bg-secondary px-4 py-2 rounded-2xl rounded-bl-md max-w-[80%] prose prose-sm prose-invert dark:prose-invert max-w-none
+      <div className="bg-secondary px-4 py-2 rounded-2xl rounded-bl-md min-w-0 max-w-[92%] sm:max-w-[80%] break-words [overflow-wrap:anywhere] prose prose-sm prose-invert dark:prose-invert
         [&_p]:text-sm [&_p]:text-foreground [&_p]:my-1
         [&_strong]:text-foreground [&_strong]:font-semibold
         [&_ul]:my-1 [&_ul]:pl-4 [&_ul]:list-disc
@@ -179,6 +193,7 @@ export const ChatSidebar = () => {
   const { isChatOpen, setIsChatOpen, chatMessages, sendUserMessage, handleInterruptAction } = useTripContext();
   const [inputValue, setInputValue] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -186,6 +201,10 @@ export const ChatSidebar = () => {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [chatMessages]);
+
+  useLayoutEffect(() => {
+    adjustTextareaHeight(textareaRef.current);
+  }, [inputValue, isChatOpen]);
 
   const handleSend = () => {
     if (inputValue.trim()) {
@@ -227,7 +246,7 @@ export const ChatSidebar = () => {
 
       {/* Chat Sheet */}
       <Sheet open={isChatOpen} onOpenChange={setIsChatOpen}>
-        <SheetContent side="right" className="w-full sm:max-w-md p-0 flex flex-col">
+        <SheetContent side="right" className="w-[100vw] max-w-full sm:max-w-md p-0 flex flex-col overflow-hidden">
           <SheetHeader className="p-4 border-b border-border">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 gradient-bg rounded-xl flex items-center justify-center">
@@ -257,18 +276,21 @@ export const ChatSidebar = () => {
 
           {/* Input */}
           <div className="p-4 border-t border-border">
-            <div className="flex gap-2">
-              <Input
+            <div className="flex items-end gap-2">
+              <Textarea
+                ref={textareaRef}
                 placeholder="Ask anything about your trip..."
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={handleKeyPress}
-                className="flex-1 rounded-xl"
+                rows={1}
+                className="flex-1 min-h-[56px] max-h-[160px] resize-none overflow-y-auto rounded-xl"
               />
               <Button
                 size="icon"
                 onClick={handleSend}
                 disabled={!inputValue.trim()}
+                aria-label="Send message"
                 className="gradient-bg rounded-xl"
               >
                 <Send className="h-4 w-4" />

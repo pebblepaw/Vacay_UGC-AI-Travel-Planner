@@ -18,11 +18,8 @@ class Settings(BaseSettings):
     TAVLY_API: str
     MAPBOX_PUBLIC: str
     MAPBOX_SECRET: str
-    GEMINI_MODEL: str = "gemini-2.5-flash"
-    DASHSCOPE_MODEL: str = "qwen2.5-vl-3b-instruct"
     DASHSCOPE_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    AGENT_LLM_PROVIDER: str = "auto"
-    AGENT_LLM_CONFIG_PATH: Path = PROJECT_ROOT / "backend" / "llm_profiles.json"
+    APP_CONFIG_PATH: Path = PROJECT_ROOT / "config" / "config.yaml"
     BOOKING_STRICT_REAL_TRIP: bool = True
     
     # Supabase
@@ -30,7 +27,7 @@ class Settings(BaseSettings):
     SUPABASE_SECRET_KEY: str
 
     # Optional settings with defaults
-    DEBUG: bool = True
+    DEBUG: str = "true"
     MAX_VIDEO_SIZE_MB: int = 500
     DOWNLOAD_TIMEOUT_SECONDS: int = 300
     

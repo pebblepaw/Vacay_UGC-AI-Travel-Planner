@@ -16,6 +16,7 @@ from urllib.parse import quote
 import logging
 
 from backend.config import settings
+from backend.services.automation.live_booking_sessions import live_booking_sessions
 
 
 class _LLMProviderShim:
@@ -56,6 +57,12 @@ class BookingQuery:
     budget_limit: float
     provider_hint: str
     max_results: int
+    origin_code: str = ""
+    origin_city_code: str = ""
+    destination_code: str = ""
+    destination_city_code: str = ""
+    trip_type: str = ""
+    cabin: str = ""
 
 
 class BrowserUseWorker:
@@ -183,60 +190,75 @@ class BrowserUseWorker:
 
         offers: list[dict[str, Any]] = []
         _log = logging.getLogger(__name__)
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True, timeout=30000)
-            page = await browser.new_page()
-            try:
-                for url in urls:
+        playwright_factory = async_playwright()
+        if hasattr(playwright_factory, "start"):
+            playwright = await playwright_factory.start()
+        else:
+            playwright = playwright_factory
+
+        browser = await playwright.chromium.launch(headless=False, timeout=30000)
+        page = await browser.new_page()
+        session = await live_booking_sessions.register(
+            provider="trip.com",
+            playwright=playwright,
+            browser=browser,
+            page=page,
+            query_summary=f"{query.origin}->{query.destination} {query.departure_date}",
+        )
+        try:
+            for url in urls:
+                try:
+                    _log.info(">>> PLAYWRIGHT goto %s", url)
+                    await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                except Exception:
+                    _log.warning(">>> PLAYWRIGHT goto failed for %s", url)
+                    continue
+
+                await self._save_trip_debug(page, "after_goto")
+
+                try:
+                    title = await page.title()
+                except Exception:
+                    title = ""
+                if "404" in (title or ""):
+                    continue
+
+                is_results_url = "showfarefirst" in page.url
+                is_results_title = "Flights from" in (title or "")
+                if not is_results_url and not is_results_title:
                     try:
-                        _log.info(">>> PLAYWRIGHT goto %s", url)
-                        await page.goto(url, wait_until="domcontentloaded", timeout=45000)
-                    except Exception:
-                        _log.warning(">>> PLAYWRIGHT goto failed for %s", url)
-                        continue
-
-                    await self._save_trip_debug(page, "after_goto")
-
-                    try:
-                        title = await page.title()
-                    except Exception:
-                        title = ""
-                    if "404" in (title or ""):
-                        continue
-
-                    is_results_url = "showfarefirst" in page.url
-                    is_results_title = "Flights from" in (title or "")
-                    if not is_results_url and not is_results_title:
-                        try:
-                            await asyncio.wait_for(
-                                self._try_trigger_trip_search(page, query),
-                                timeout=25,
-                            )
-                        except asyncio.TimeoutError:
-                            _log.warning(">>> PLAYWRIGHT search trigger timed out")
-
-                        await self._save_trip_debug(page, "after_search_trigger")
-
-                    # Allow dynamic results to render or hydrate.
-                    try:
-                        await asyncio.wait_for(self._wait_for_trip_results(page), timeout=25)
+                        await asyncio.wait_for(
+                            self._try_trigger_trip_search(page, query),
+                            timeout=25,
+                        )
                     except asyncio.TimeoutError:
-                        _log.warning(">>> PLAYWRIGHT wait for results timed out")
+                        _log.warning(">>> PLAYWRIGHT search trigger timed out")
 
-                    await self._save_trip_debug(page, "after_wait_results")
+                    await self._save_trip_debug(page, "after_search_trigger")
 
-                    if await self._is_trip_homepage(page):
-                        self.last_error = "trip.com stayed on homepage after search"
-                        await self._save_trip_debug(page)
-                        continue
+                try:
+                    await asyncio.wait_for(self._wait_for_trip_results(page), timeout=25)
+                except asyncio.TimeoutError:
+                    _log.warning(">>> PLAYWRIGHT wait for results timed out")
 
-                    offers = await self._scrape_trip_cards(page, query)
-                    if offers:
-                        return offers
-                    # Save diagnostics for selector tuning
-                    await self._save_trip_debug(page, "no_offers")
-            finally:
-                await browser.close()
+                await self._save_trip_debug(page, "after_wait_results")
+
+                if await self._is_trip_homepage(page):
+                    self.last_error = "trip.com stayed on homepage after search"
+                    await self._save_trip_debug(page)
+                    continue
+
+                offers = await self._scrape_trip_cards(page, query)
+                if offers:
+                    for item in offers:
+                        item.setdefault("live_session_id", session.session_id)
+                    return offers
+                await self._save_trip_debug(page, "no_offers")
+        except Exception:
+            await live_booking_sessions.close(session.session_id)
+            raise
+
+        await live_booking_sessions.close(session.session_id)
 
         if not self.last_error:
             self.last_error = "playwright could not locate flight cards on trip.com"
@@ -245,15 +267,17 @@ class BrowserUseWorker:
     def _build_trip_search_urls(self, query: BookingQuery) -> list[str]:
         origin_raw = (query.origin or "").strip()
         dest_raw = (query.destination or "").strip()
-        origin_code = self._extract_iata_code(origin_raw)
-        dest_code = self._extract_iata_code(dest_raw)
-        origin_city = self._extract_city_code(origin_raw)
-        dest_city = self._extract_city_code(dest_raw)
+        origin_code = (query.origin_code or "").strip() or self._extract_explicit_iata_code(origin_raw)
+        dest_code = (query.destination_code or "").strip() or self._extract_explicit_iata_code(dest_raw)
+        origin_city = (query.origin_city_code or "").strip()
+        dest_city = (query.destination_city_code or "").strip()
         origin_query = quote(origin_code or origin_raw)
         dest_query = quote(dest_code or dest_raw)
         origin_slug = quote((origin_code or origin_raw).lower().replace(" ", "-"))
         dest_slug = quote((dest_code or dest_raw).lower().replace(" ", "-"))
         date = query.departure_date
+        trip_type = "rt" if query.return_date or query.trip_type == "round_trip" else "ow"
+        quantity = max(int(query.adults), 1)
         if not origin_raw or not dest_raw or not date:
             return []
 
@@ -263,59 +287,33 @@ class BrowserUseWorker:
             f"dcity={origin_city or origin_query}&"
             f"acity={dest_city or dest_query}&"
             f"ddate={date}&"
-            f"triptype=ow&class=y&quantity=1&searchboxarg=t&nonstoponly=off&locale=en-XX&curr=USD"
+            f"triptype={trip_type}&class=y&quantity={quantity}&searchboxarg=t&nonstoponly=off&locale=en-XX&curr=USD"
+            + (f"&rdate={query.return_date}" if query.return_date else "")
             + (f"&dairport={origin_code}" if origin_code else "")
             + (f"&aairport={dest_code}" if dest_code else ""),
-            f"https://www.trip.com/flights/?triptype=oneway&dcity={origin_query}&acity={dest_query}&date={date}",
-            f"https://www.trip.com/flights/{origin_slug}-to-{dest_slug}/?departuredate={date}&triptype=oneway",
-            f"https://www.trip.com/flights/{origin_slug}-to-{dest_slug}/?triptype=oneway&departuredate={date}",
+            f"https://www.trip.com/flights/?triptype={'roundtrip' if trip_type == 'rt' else 'oneway'}&dcity={origin_query}&acity={dest_query}&date={date}"
+            + (f"&returnDate={query.return_date}" if query.return_date else ""),
+            f"https://www.trip.com/flights/{origin_slug}-to-{dest_slug}/?departuredate={date}&triptype={'roundtrip' if trip_type == 'rt' else 'oneway'}"
+            + (f"&returndate={query.return_date}" if query.return_date else ""),
+            f"https://www.trip.com/flights/{origin_slug}-to-{dest_slug}/?triptype={'roundtrip' if trip_type == 'rt' else 'oneway'}&departuredate={date}"
+            + (f"&returndate={query.return_date}" if query.return_date else ""),
         ]
 
-    def _extract_city_code(self, value: str) -> str | None:
+    def _extract_explicit_iata_code(self, value: str) -> str | None:
         if not value:
             return None
-        lowered = value.lower()
-        if "tokyo" in lowered or "东京" in value:
-            return "tyo"
-        if "shanghai" in lowered or "上海" in value:
-            return "sha"
-        if "paris" in lowered or "巴黎" in value:
-            return "par"
-        if "london" in lowered or "伦敦" in value:
-            return "lon"
-        return None
-
-    def _extract_iata_code(self, value: str) -> str | None:
-        if not value:
-            return None
-        lowered = value.lower()
-        name_map = {
-            "tokyo haneda": "HND",
-            "haneda": "HND",
-            "tokyo narita": "NRT",
-            "narita": "NRT",
-            "shanghai pudong": "PVG",
-            "pudong": "PVG",
-            "shanghai hongqiao": "SHA",
-            "hongqiao": "SHA",
-            "东京羽田": "HND",
-            "羽田": "HND",
-            "东京成田": "NRT",
-            "成田": "NRT",
-            "上海浦东": "PVG",
-            "浦东": "PVG",
-            "上海虹桥": "SHA",
-            "虹桥": "SHA",
-            "paris": "PAR",
-            "巴黎": "PAR",
-            "london": "LON",
-            "伦敦": "LON",
-        }
-        for key, code in name_map.items():
-            if key in lowered or key in value:
-                return code
         match = re.search(r"\b([A-Z]{3})\b", value)
         return match.group(1) if match else None
+
+    def _is_results_page(self, url: str) -> bool:
+        lowered = (url or "").lower()
+        if "/flights/passenger" in lowered:
+            return False
+        if "showfarefirst" in lowered:
+            return True
+        if "/flights/?" in lowered and "triptype" in lowered:
+            return True
+        return False
 
     async def _try_trigger_trip_search(self, page: Any, query: BookingQuery) -> None:
         try:
@@ -329,14 +327,14 @@ class BrowserUseWorker:
                 pass
 
             if query.origin:
-                origin_code = self._extract_iata_code(query.origin)
+                origin_code = (query.origin_code or "").strip() or self._extract_explicit_iata_code(query.origin)
                 await page.click("[data-testid='search_city_from0']")
                 await page.fill("input[data-testid='search_city_from0']", query.origin)
                 await page.wait_for_timeout(300)
                 await self._select_poi_suggestion(page, origin_code)
 
             if query.destination:
-                dest_code = self._extract_iata_code(query.destination)
+                dest_code = (query.destination_code or "").strip() or self._extract_explicit_iata_code(query.destination)
                 await page.click("[data-testid='search_city_to0']")
                 await page.fill("input[data-testid='search_city_to0']", query.destination)
                 await page.wait_for_timeout(300)
@@ -593,15 +591,12 @@ class BrowserUseWorker:
             except Exception:
                 deeplink = ""
 
-            if not deeplink and page_url:
-                card_id = ""
-                try:
-                    card_id = await card.get_attribute("id") or ""
-                except Exception:
-                    card_id = ""
-                deeplink = f"{page_url}#{card_id}" if card_id else page_url
+            results_page_url = page_url if self._is_results_page(page_url) else ""
+            is_true_deeplink = bool(deeplink) and not self._is_results_page(deeplink)
+            if not is_true_deeplink:
+                deeplink = ""
 
-            if deeplink and price is not None:
+            if price is not None:
                 offers.append(
                     {
                         "id": f"offer_{idx}",
@@ -611,6 +606,9 @@ class BrowserUseWorker:
                         "provider": "trip.com",
                         "deeplink": deeplink,
                         "card_selector": card_selector,
+                        "results_page_url": results_page_url,
+                        "handoff_mode": "deeplink" if is_true_deeplink else "live_session_only",
+                        "requires_live_session": not is_true_deeplink,
                         "departure_date": query.departure_date,
                         "return_date": query.return_date,
                     }

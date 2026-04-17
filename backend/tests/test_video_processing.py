@@ -173,3 +173,54 @@ async def test_process_videos_still_succeeds_when_locations_are_extracted(
     assert response.trip is not None
     builder.build_itinerary.assert_awaited_once()
     storage.save_trip.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_process_videos_returns_422_when_scope_validation_drops_all_pois(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    downloader = SimpleNamespace(
+        download_multiple=AsyncMock(
+            return_value=[
+                {
+                    "success": True,
+                    "file_path": "/tmp/test-video.mp4",
+                    "title": "Test Video",
+                    "platform": "tiktok",
+                }
+            ]
+        ),
+        cleanup_video=AsyncMock(),
+    )
+    analyzer = SimpleNamespace(
+        analyze_multiple_videos=AsyncMock(
+            return_value=[
+                GeminiAnalysisResult(
+                    locations=[{"name": "To Summer", "type": "Food", "description": "Cafe"}],
+                    activities=["eating"],
+                    vibes=["trendy"],
+                    metadata={"city": "Shanghai", "country": "China", "confidence": "high"},
+                )
+            ]
+        )
+    )
+    builder = SimpleNamespace(
+        build_itinerary=AsyncMock(
+            side_effect=ValueError("No extracted locations could be resolved inside the video's location scope.")
+        )
+    )
+    storage = SimpleNamespace(save_trip=AsyncMock(return_value=True))
+
+    monkeypatch.setattr(videos_router, "video_downloader", downloader)
+    monkeypatch.setattr(videos_router, "gemini_analyzer", analyzer)
+    monkeypatch.setattr(videos_router, "itinerary_builder", builder)
+    monkeypatch.setattr(videos_router, "storage", storage)
+
+    request = VideoProcessRequest(urls=["https://example.com/video"])
+
+    with pytest.raises(HTTPException) as exc_info:
+        await videos_router.process_videos(request, BackgroundTasks())
+
+    assert exc_info.value.status_code == 422
+    assert "resolved" in exc_info.value.detail.lower()
+    storage.save_trip.assert_not_called()

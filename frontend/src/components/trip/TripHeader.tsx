@@ -7,6 +7,10 @@ import { getPlatformIcon } from '@/data/mockData';
 
 export const TripHeader = () => {
   const { trip } = useTripContext();
+  const debugApi = import.meta.env.VITE_API_URL || 'relative';
+  const debugWorkspace = import.meta.env.VITE_WORKSPACE_LABEL || 'unknown-workspace';
+  const debugConfig = import.meta.env.VITE_APP_CONFIG_PATH || 'config/config.yaml';
+  const showDebug = import.meta.env.DEV;
 
   return (
     <motion.header
@@ -44,6 +48,11 @@ export const TripHeader = () => {
                 <Video className="h-3 w-3" />
                 {trip.source_videos.length} videos
               </Badge>
+              {showDebug && (
+                <Badge variant="outline" className="hidden md:inline-flex gap-1 text-[10px]">
+                  {debugWorkspace} · {debugApi} · {debugConfig}
+                </Badge>
+              )}
             </div>
           </div>
         </div>
