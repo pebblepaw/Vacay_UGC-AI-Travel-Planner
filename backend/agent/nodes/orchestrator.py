@@ -118,7 +118,7 @@ def orchestrator_node(state: AgentState) -> dict:
     _log = logging.getLogger(__name__)
     _log.info(">>> ORCHESTRATOR NODE entered")
 
-    llm = get_agent_llm(temperature=0)
+    llm = get_agent_llm(role="orchestrator", temperature=0)
 
     chain = orchestrator_prompt | llm | JsonOutputParser() 
 
@@ -232,5 +232,4 @@ def orchestrator_node(state: AgentState) -> dict:
             "current_step": 0,
             "critique": "",
         }
-
 

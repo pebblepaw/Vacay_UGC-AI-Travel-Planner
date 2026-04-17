@@ -1,0 +1,31 @@
+{
+  "roles": {
+    "default": "cheap_tools",
+    "orchestrator": "high_reasoning",
+    "critic": "high_reasoning",
+    "travel_editor": "cheap_tools",
+    "search_agent": "cheap_tools",
+    "booking_agent": "cheap_tools",
+    "chitchat": "cheap_text",
+    "browser_use": "cheap_tools",
+    "video_analyzer": "multimodal_analysis"
+  },
+  "profiles": {
+    "high_reasoning": {
+      "gemini": "gemini-2.5-pro",
+      "dashscope": "qwen-max"
+    },
+    "cheap_tools": {
+      "gemini": "gemini-2.5-flash",
+      "dashscope": "qwen-plus"
+    },
+    "cheap_text": {
+      "gemini": "gemini-2.5-flash",
+      "dashscope": "qwen-turbo"
+    },
+    "multimodal_analysis": {
+      "gemini": "gemini-2.5-flash",
+      "dashscope": "qwen2.5-vl-3b-instruct"
+    }
+  }
+}

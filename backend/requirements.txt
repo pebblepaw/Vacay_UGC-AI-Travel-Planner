@@ -10,12 +10,14 @@ pydantic-settings>=2.0.0
 
 # ── AI / Agent ──
 # IMPORTANT: These must be from the same "generation" of LangChain.
-# langchain-google-genai 2.x needs langchain-core 0.3.x and google-generativeai 0.8.x
+# langchain-google-genai 2.x needs langchain-core 0.3.x.
+# google-genai powers the direct video-analysis path in gemini_analyzer.py.
 # Do NOT pin langchain-core separately — let pip resolve it from these two.
 langchain-google-genai>=2.0.0,<3.0.0
 langchain-openai>=0.2.0,<1.0.0
 langgraph>=0.2.0,<1.0.0
 google-generativeai>=0.8.0,<0.9.0
+google-genai>=1.65.0,<2.0.0
 
 # ── Video / Services ──
 yt-dlp>=2024.1.1

@@ -5,7 +5,9 @@ Uses Tavily API to get coordinates and details for locations.
 import asyncio
 import httpx
 import logging
+import re
 from typing import Optional
+from urllib.parse import quote
 
 from backend.config import settings
 
@@ -14,6 +16,68 @@ logger = logging.getLogger(__name__)
 
 class TavilyLocationService:
     """Service for geocoding and enriching location data using Tavily."""
+
+    _COUNTRY_HINTS = {
+        # France
+        "france": "fr", "french": "fr", "paris": "fr", "nice": "fr",
+        "provence": "fr", "riviera": "fr", "côte": "fr", "cote": "fr",
+        "marseille": "fr", "lyon": "fr", "bordeaux": "fr", "cannes": "fr",
+        "south of france": "fr", "côte d'azur": "fr",
+        # Japan
+        "japan": "jp", "tokyo": "jp", "osaka": "jp", "kyoto": "jp",
+        "hokkaido": "jp", "okinawa": "jp",
+        # Italy
+        "italy": "it", "rome": "it", "milan": "it", "florence": "it",
+        "venice": "it", "naples": "it", "amalfi": "it", "sicily": "it",
+        "tuscany": "it",
+        # Spain
+        "spain": "es", "barcelona": "es", "madrid": "es", "seville": "es",
+        "ibiza": "es", "mallorca": "es",
+        # UK
+        "uk": "gb", "london": "gb", "england": "gb", "scotland": "gb",
+        "edinburgh": "gb",
+        # Germany
+        "germany": "de", "berlin": "de", "munich": "de",
+        # Asia
+        "thailand": "th", "bangkok": "th", "phuket": "th", "chiang mai": "th",
+        "indonesia": "id", "bali": "id", "jakarta": "id",
+        "vietnam": "vn", "hanoi": "vn", "ho chi minh": "vn",
+        "singapore": "sg",
+        "malaysia": "my", "kuala lumpur": "my",
+        # Mediterranean / Islands
+        "greece": "gr", "athens": "gr", "santorini": "gr", "mykonos": "gr",
+        "croatia": "hr", "dubrovnik": "hr",
+        "turkey": "tr", "istanbul": "tr", "cappadocia": "tr",
+        "portugal": "pt", "lisbon": "pt", "porto": "pt",
+        # Americas
+        "mexico": "mx", "cancun": "mx", "tulum": "mx",
+        "colombia": "co", "brazil": "br",
+        "peru": "pe", "argentina": "ar",
+        "costa rica": "cr",
+        # Oceania
+        "australia": "au", "sydney": "au", "melbourne": "au",
+        "new zealand": "nz", "queenstown": "nz", "auckland": "nz", "wanaka": "nz",
+        # Others
+        "korea": "kr", "seoul": "kr",
+        "morocco": "ma", "marrakech": "ma",
+        "egypt": "eg", "cairo": "eg",
+        "dubai": "ae", "abu dhabi": "ae",
+        "iceland": "is",
+        "norway": "no", "sweden": "se", "denmark": "dk",
+        "netherlands": "nl", "amsterdam": "nl",
+        "switzerland": "ch", "zurich": "ch",
+        "austria": "at", "vienna": "at",
+        "czech": "cz", "prague": "cz",
+        "hungary": "hu", "budapest": "hu",
+        "philippines": "ph", "manila": "ph",
+        "india": "in", "sri lanka": "lk",
+        "hawaii": "us", "new york": "us", "california": "us",
+    }
+    _STREET_TERMS = (
+        "road", "rd", "street", "st", "avenue", "ave", "boulevard", "blvd",
+        "lane", "ln", "drive", "dr", "way", "place", "pl", "terrace", "ter",
+        "track", "loop", "highway", "hwy",
+    )
     
     def __init__(self):
         self.api_key = settings.TAVLY_API
@@ -61,6 +125,18 @@ class TavilyLocationService:
             if city:
                 logger.info(f"Nominatim retry without city for: {place_name}")
                 result = await self._geocode_with_nominatim(place_name, None)
+                if result:
+                    return result
+
+            # Strategy 4: use Tavily search to discover a concrete address,
+            # then geocode that address with Mapbox and Nominatim.
+            address_candidates = await self._discover_location_candidates_with_tavily(place_name, city)
+            for candidate in address_candidates:
+                result = await self._geocode_with_mapbox(candidate, city)
+                if result:
+                    return result
+
+                result = await self._geocode_with_nominatim(candidate, None)
                 if result:
                     return result
 
@@ -143,68 +219,9 @@ class TavilyLocationService:
                 }
 
                 # Try to detect a country code from the city hint
-                country_hints = {
-                    # France
-                    "france": "fr", "french": "fr", "paris": "fr", "nice": "fr",
-                    "provence": "fr", "riviera": "fr", "côte": "fr", "cote": "fr",
-                    "marseille": "fr", "lyon": "fr", "bordeaux": "fr", "cannes": "fr",
-                    "south of france": "fr", "côte d'azur": "fr",
-                    # Japan
-                    "japan": "jp", "tokyo": "jp", "osaka": "jp", "kyoto": "jp",
-                    "hokkaido": "jp", "okinawa": "jp",
-                    # Italy
-                    "italy": "it", "rome": "it", "milan": "it", "florence": "it",
-                    "venice": "it", "naples": "it", "amalfi": "it", "sicily": "it",
-                    "tuscany": "it",
-                    # Spain
-                    "spain": "es", "barcelona": "es", "madrid": "es", "seville": "es",
-                    "ibiza": "es", "mallorca": "es",
-                    # UK
-                    "uk": "gb", "london": "gb", "england": "gb", "scotland": "gb",
-                    "edinburgh": "gb",
-                    # Germany
-                    "germany": "de", "berlin": "de", "munich": "de",
-                    # Asia
-                    "thailand": "th", "bangkok": "th", "phuket": "th", "chiang mai": "th",
-                    "indonesia": "id", "bali": "id", "jakarta": "id",
-                    "vietnam": "vn", "hanoi": "vn", "ho chi minh": "vn",
-                    "singapore": "sg",
-                    "malaysia": "my", "kuala lumpur": "my",
-                    # Mediterranean / Islands
-                    "greece": "gr", "athens": "gr", "santorini": "gr", "mykonos": "gr",
-                    "croatia": "hr", "dubrovnik": "hr",
-                    "turkey": "tr", "istanbul": "tr", "cappadocia": "tr",
-                    "portugal": "pt", "lisbon": "pt", "porto": "pt",
-                    # Americas
-                    "mexico": "mx", "cancun": "mx", "tulum": "mx",
-                    "colombia": "co", "brazil": "br",
-                    "peru": "pe", "argentina": "ar",
-                    "costa rica": "cr",
-                    # Oceania
-                    "australia": "au", "sydney": "au", "melbourne": "au",
-                    "new zealand": "nz",
-                    # Others
-                    "korea": "kr", "seoul": "kr",
-                    "morocco": "ma", "marrakech": "ma",
-                    "egypt": "eg", "cairo": "eg",
-                    "dubai": "ae", "abu dhabi": "ae",
-                    "iceland": "is",
-                    "norway": "no", "sweden": "se", "denmark": "dk",
-                    "netherlands": "nl", "amsterdam": "nl",
-                    "switzerland": "ch", "zurich": "ch",
-                    "austria": "at", "vienna": "at",
-                    "czech": "cz", "prague": "cz",
-                    "hungary": "hu", "budapest": "hu",
-                    "philippines": "ph", "manila": "ph",
-                    "india": "in", "sri lanka": "lk",
-                    "hawaii": "us", "new york": "us", "california": "us",
-                }
-                if city:
-                    city_lower = city.lower()
-                    for hint, code in country_hints.items():
-                        if hint in city_lower:
-                            params["countrycodes"] = code
-                            break
+                country_code = self._country_code_from_hint(city)
+                if country_code:
+                    params["countrycodes"] = country_code
 
                 response = await client.get(
                     self.nominatim_url,
@@ -230,6 +247,167 @@ class TavilyLocationService:
 
         except Exception as e:
             logger.error(f"Nominatim structured geocoding error: {e}")
+            return None
+
+    def _country_code_from_hint(self, city: Optional[str]) -> Optional[str]:
+        """Infer a country code from a city or region hint."""
+        if not city:
+            return None
+
+        city_lower = city.lower()
+        for hint, code in self._COUNTRY_HINTS.items():
+            if hint in city_lower:
+                return code
+        return None
+
+    def _looks_like_address(self, candidate: str) -> bool:
+        """Rough filter to avoid geocoding arbitrary prose as an address."""
+        lowered = candidate.lower()
+        has_number = bool(re.search(r"\d", candidate))
+        has_street_term = any(term in lowered for term in self._STREET_TERMS)
+        has_postcode = bool(re.search(r"\b\d{4,6}\b", candidate))
+        return has_number and (has_street_term or has_postcode)
+
+    def _normalize_address_candidate(self, candidate: str, city: Optional[str]) -> str:
+        """Clean and complete an address candidate before geocoding."""
+        cleaned = re.sub(r"\s+", " ", candidate).strip(" ,;:-")
+        if city and city.lower() not in cleaned.lower():
+            cleaned = f"{cleaned}, {city}"
+        return cleaned
+
+    def _extract_address_candidates(self, text: str, city: Optional[str]) -> list[str]:
+        """Extract likely address strings from Tavily answer/result text."""
+        if not text:
+            return []
+
+        cleaned = re.sub(r"\s+", " ", text)
+        candidates: list[str] = []
+
+        explicit_patterns = [
+            re.compile(r"(?:located at|address(?: is|:)?|find us at)\s+([^.;]+)", re.IGNORECASE),
+            re.compile(r"\b(\d{1,5}[A-Za-z]?\s+[^.;]+?)\b(?=(?:\.\s|$))"),
+        ]
+
+        for pattern in explicit_patterns:
+            for match in pattern.finditer(cleaned):
+                candidate = self._normalize_address_candidate(match.group(1), city)
+                if self._looks_like_address(candidate):
+                    candidates.append(candidate)
+
+        for segment in re.split(r"[.\n]", cleaned):
+            candidate = self._normalize_address_candidate(segment, city)
+            if self._looks_like_address(candidate):
+                candidates.append(candidate)
+
+        # Preserve order, remove duplicates.
+        return list(dict.fromkeys(candidates))
+
+    async def _discover_location_candidates_with_tavily(
+        self,
+        place_name: str,
+        city: Optional[str] = None,
+    ) -> list[str]:
+        """Use Tavily search to recover concrete address candidates for a venue."""
+        if not self.api_key:
+            return []
+
+        query = f"\"{place_name}\""
+        if city:
+            query += f" {city}"
+        query += " address"
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(
+                    f"{self.base_url}/search",
+                    json={
+                        "api_key": self.api_key,
+                        "query": query,
+                        "search_depth": "advanced",
+                        "include_answer": True,
+                        "include_raw_content": False,
+                        "max_results": 5,
+                    },
+                )
+
+            if response.status_code != 200:
+                logger.warning(f"Tavily address search failed for {place_name}: {response.status_code}")
+                return []
+
+            data = response.json()
+            candidates: list[str] = []
+
+            answer = data.get("answer")
+            candidates.extend(self._extract_address_candidates(answer or "", city))
+
+            for result in data.get("results", []):
+                candidates.extend(self._extract_address_candidates(result.get("title", ""), city))
+                candidates.extend(self._extract_address_candidates(result.get("content", ""), city))
+
+            unique_candidates = list(dict.fromkeys(candidates))
+            if unique_candidates:
+                logger.info("Recovered %s Tavily address candidate(s) for %s", len(unique_candidates), place_name)
+            return unique_candidates
+
+        except Exception as e:
+            logger.warning(f"Tavily address discovery failed for {place_name}: {e}")
+            return []
+
+    async def _geocode_with_mapbox(
+        self,
+        query: str,
+        city: Optional[str] = None,
+    ) -> Optional[dict]:
+        """Geocode a concrete address or venue query with Mapbox."""
+        access_token = settings.MAPBOX_PUBLIC or settings.MAPBOX_SECRET
+        if not access_token:
+            return None
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                params: dict[str, str | int] = {
+                    "access_token": access_token,
+                    "limit": 1,
+                    "autocomplete": "false",
+                }
+                country_code = self._country_code_from_hint(city)
+                if country_code:
+                    params["country"] = country_code
+
+                response = await client.get(
+                    f"https://api.mapbox.com/geocoding/v5/mapbox.places/{quote(query, safe='')}.json",
+                    params=params,
+                )
+
+            if response.status_code != 200:
+                logger.warning(f"Mapbox geocoding error for '{query}': {response.status_code}")
+                return None
+
+            features = response.json().get("features", [])
+            if not features:
+                return None
+
+            result = features[0]
+            place_types = set(result.get("place_type", []))
+
+            # Reject broad place-level matches when we asked for a street address.
+            if self._looks_like_address(query) and "address" not in place_types and "poi" not in place_types:
+                logger.info("Mapbox returned a low-specificity match for '%s': %s", query, result.get("place_name"))
+                return None
+
+            coords = result.get("center")
+            if not coords or len(coords) != 2:
+                return None
+
+            return {
+                "coords": [float(coords[0]), float(coords[1])],
+                "full_name": result.get("place_name", query),
+                "address": result.get("place_name", query),
+                "img": "",
+            }
+
+        except Exception as e:
+            logger.warning(f"Mapbox geocoding failed for '{query}': {e}")
             return None
     
     async def get_place_image(self, place_name: str, city: Optional[str] = None) -> Optional[str]:

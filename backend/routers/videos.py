@@ -17,6 +17,32 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/videos", tags=["videos"])
 
 
+def _count_extracted_locations(analysis_results) -> int:
+    return sum(len(result.locations) for result in analysis_results)
+
+
+def _collect_analysis_errors(analysis_results) -> list[str]:
+    errors: list[str] = []
+    for result in analysis_results:
+        error = result.metadata.get("error")
+        if error:
+            errors.append(str(error))
+    return errors
+
+
+def _summarize_analysis_failure(errors: list[str]) -> str:
+    combined = " ".join(errors).lower()
+
+    if "api key" in combined and "not valid" in combined:
+        return "Gemini video upload failed before analysis could start."
+    if "quota" in combined or "resource exhausted" in combined:
+        return "Gemini ran out of quota during video analysis."
+    if "permission" in combined or "forbidden" in combined:
+        return "Gemini rejected the video-analysis request."
+
+    return "Video analysis failed before any locations were extracted."
+
+
 @router.post("/process", response_model=VideoProcessResponse)
 async def process_videos(
     request: VideoProcessRequest,
@@ -62,6 +88,29 @@ async def process_videos(
         analysis_results = await gemini_analyzer.analyze_multiple_videos(video_data_for_analysis)
         
         logger.info(f"Analyzed {len(analysis_results)} videos with Gemini")
+
+        analysis_errors = _collect_analysis_errors(analysis_results)
+        extracted_locations = _count_extracted_locations(analysis_results)
+
+        if analysis_errors and extracted_locations == 0:
+            logger.error(
+                "Video analysis failed for all videos: %s",
+                analysis_errors,
+            )
+            raise HTTPException(
+                status_code=502,
+                detail=_summarize_analysis_failure(analysis_errors),
+            )
+
+        if extracted_locations == 0:
+            logger.warning(
+                "No travel locations were extracted from %s video(s)",
+                len(successful_downloads),
+            )
+            raise HTTPException(
+                status_code=422,
+                detail="No travel locations could be extracted from the provided videos.",
+            )
         
         # Step 3: Build itinerary
         video_metadata = [

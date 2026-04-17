@@ -1,14 +1,14 @@
 """
 End-to-end tests for the LangGraph agent.
 
-These tests use REAL LLM calls (DashScope/Qwen by default) and verify the full pipeline:
+These tests use REAL LLM calls (DashScope/Qwen or Gemini) and verify the full pipeline:
 orchestrator → agent → tools → critic → response
 
 Run with: pytest backend/tests/test_agent_e2e.py -v -s
 The -s flag shows print output (useful for seeing agent responses).
 
-NOTE: These require DASHSCOPE_API_KEY in .env when AGENT_LLM_PROVIDER=aliyun,
-and cost real API credits.
+NOTE: These require a working agent LLM provider in .env
+(DashScope/Qwen or Gemini) and cost real API credits.
 """
 
 import pytest

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, ReactNode, useEffect, useRef } from 'react';
 import { Trip, POI, ChatMessage, sampleTrip, initialChatMessages } from '@/data/mockData';
 import { getTrip, sendChatMessage, listTrips } from '@/lib/api';
+import { createClientMessageId, PendingChatMessage } from '@/lib/chatMessages';
 import { useToast } from '@/hooks/use-toast';
 
 interface TripContextType {
@@ -8,7 +9,7 @@ interface TripContextType {
   selectedPOI: POI | null;
   setSelectedPOI: (poi: POI | null) => void;
   chatMessages: ChatMessage[];
-  addChatMessage: (message: Omit<ChatMessage, 'id' | 'timestamp'>) => void;
+  addChatMessage: (message: PendingChatMessage) => void;
   sendUserMessage: (content: string) => void;
   handleInterruptAction: (messageId: string, action: 'approve' | 'reject', optionId?: string) => void;
   isChatOpen: boolean;
@@ -56,11 +57,11 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId }) 
       try {
         const data = await getTrip(id);
         setTrip(data);
-        setChatMessages([{
-          id: `msg_${Date.now()}`,
-          type: 'agent',
-          content: `Hey! 👋 I've loaded your trip "${data.title}". Feel free to ask me anything!`,
-          timestamp: new Date(),
+            setChatMessages([{
+              id: createClientMessageId(),
+              type: 'agent',
+              content: `Hey! 👋 I've loaded your trip "${data.title}". Feel free to ask me anything!`,
+              timestamp: new Date(),
         }]);
       } catch (error: any) {
         toast({
@@ -84,7 +85,7 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId }) 
             const latest = data.trips[0];
             setTrip(latest);
             setChatMessages([{
-              id: `msg_${Date.now()}`,
+              id: createClientMessageId(),
               type: 'agent',
               content: `Hey! 👋 I've loaded your trip "${latest.title}". Feel free to ask me anything!`,
               timestamp: new Date(),
@@ -99,11 +100,11 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId }) 
     }
   }, [tripId, toast]);
 
-  const addChatMessage = useCallback((message: Omit<ChatMessage, 'id' | 'timestamp'>) => {
+  const addChatMessage = useCallback((message: PendingChatMessage) => {
     const newMessage: ChatMessage = {
       ...message,
-      id: `msg_${Date.now()}`,
-      timestamp: new Date(),
+      id: message.id ?? createClientMessageId(),
+      timestamp: message.timestamp ?? new Date(),
     };
     setChatMessages(prev => [...prev, newMessage]);
   }, []);
@@ -125,7 +126,7 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId }) 
       }));
 
     // Show thinking indicator immediately
-    const thinkingId = `msg_thinking_${Date.now()}`;
+    const thinkingId = createClientMessageId('msg_thinking');
     setChatMessages(prev => [...prev, {
       id: thinkingId,
       type: 'agent' as const,
@@ -144,6 +145,8 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId }) 
       response.messages.forEach((msg) => {
         if (msg.type === 'agent') {
           addChatMessage({
+            id: msg.id,
+            timestamp: new Date(msg.timestamp),
             type: 'agent',
             content: msg.content,
           });
@@ -154,6 +157,8 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId }) 
             return;
           }
           addChatMessage({
+            id: msg.id,
+            timestamp: new Date(msg.timestamp),
             type: 'interrupt',
             content: msg.content,
             interrupt_type: msg.interrupt_type,

@@ -58,7 +58,7 @@ def travel_editor_node(state: AgentState) -> dict:
     5. The message history (including previous tool results)
     """
 
-    llm = get_agent_llm(temperature=0)
+    llm = get_agent_llm(role="travel_editor", temperature=0)
 
     tools = [delete_poi, add_poi, swap_poi, move_poi, replan_day, optimize_trip]
     llm_with_tools = llm.bind_tools(tools)
@@ -124,4 +124,3 @@ def travel_editor_node(state: AgentState) -> dict:
         "messages": [response],
         "last_agent": "travel_editor",
     }
-

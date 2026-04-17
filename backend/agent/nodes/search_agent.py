@@ -27,7 +27,7 @@ def _get_trip_city(trip) -> str:
 def search_agent_node(state: AgentState) -> dict:
     """Search agent: finds places using Tavily + geocoding."""
 
-    llm = get_agent_llm(temperature=0)
+    llm = get_agent_llm(role="search_agent", temperature=0)
 
     tools = [search_places]
     llm_with_tools = llm.bind_tools(tools)

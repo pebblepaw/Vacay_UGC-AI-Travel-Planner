@@ -52,12 +52,17 @@ def _extract_route(text: str) -> tuple[str, str]:
 
     # English patterns: from X to Y
     if not origin or not destination:
-        en_match = re.search(r"from\s+([a-z\s\-]+?)\s+to\s+([a-z\s\-]+)", lowered)
+        en_match = re.search(
+            r"from\s+([a-z0-9()\-/\s]+?)\s+to\s+([a-z0-9()\-/\s]+?)"
+            r"(?=\s+(?:on|for|depart(?:ing|ure)|return|with|budget)\b|[,.]|$)",
+            text,
+            re.IGNORECASE,
+        )
         if en_match:
             if not origin:
-                origin = en_match.group(1).strip().title()
+                origin = en_match.group(1).strip(" ,.;")
             if not destination:
-                destination = en_match.group(2).strip().title()
+                destination = en_match.group(2).strip(" ,.;")
 
     # Fallback: keep legacy explicit mapping for known routes
     if not origin and ("东京" in text or "tokyo" in lowered):
@@ -103,7 +108,7 @@ def _extract_traveler_info(text: str) -> dict[str, str]:
 
 def booking_agent_node(state: AgentState) -> dict:
     _log = logging.getLogger(__name__)
-    llm = get_agent_llm(temperature=0)
+    llm = get_agent_llm(role="booking_agent", temperature=0)
 
     llm_with_tools = llm.bind_tools([
         find_booking_options,

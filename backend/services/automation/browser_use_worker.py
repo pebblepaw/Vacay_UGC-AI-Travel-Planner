@@ -31,6 +31,20 @@ class _LLMProviderShim:
         return getattr(self._llm, name)
 
 
+def build_browser_use_llm(*, temperature: float = 0) -> _LLMProviderShim:
+    """Build the LLM wrapper expected by browser-use.
+
+    The browser automation path must use the same provider choice as the rest of
+    the agent graph, including fallback from DashScope to Gemini when only one
+    provider is configured.
+    """
+    from backend.llm import get_agent_llm, resolve_agent_llm_config
+
+    config = resolve_agent_llm_config(role="browser_use")
+    llm = get_agent_llm(role="browser_use", temperature=temperature)
+    return _LLMProviderShim(llm, config.provider, config.model)
+
+
 @dataclass
 class BookingQuery:
     booking_type: str
@@ -113,11 +127,7 @@ class BrowserUseWorker:
             init_sig = inspect.signature(Agent)
             if "llm" in init_sig.parameters:
                 # Build a LangChain-compatible LLM for browser-use.
-                from backend.llm import get_agent_llm
-
-                llm = get_agent_llm(temperature=0)
-                model_name = settings.DASHSCOPE_MODEL
-                agent_kwargs["llm"] = _LLMProviderShim(llm, "dashscope", model_name)
+                agent_kwargs["llm"] = build_browser_use_llm(temperature=0)
         except Exception:
             # If signature introspection fails, keep minimal kwargs.
             pass

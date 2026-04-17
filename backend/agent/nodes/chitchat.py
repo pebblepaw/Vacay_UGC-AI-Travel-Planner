@@ -29,7 +29,7 @@ def chitchat_node(state: AgentState):
     if _is_date_question(last_msg):
         return {'messages': [AIMessage(content=_today_text_cn())]}
 
-    llm = get_agent_llm()
+    llm = get_agent_llm(role="chitchat")
 
     chain = prompt | llm
 

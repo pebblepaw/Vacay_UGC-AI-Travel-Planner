@@ -93,7 +93,7 @@ def critic_node(state: AgentState) -> dict:
     _log = _logging.getLogger(__name__)
     _log.info(f">>> CRITIC NODE entered, iteration_count={state.get('iteration_count', 0)}")
 
-    llm = get_agent_llm(temperature=0)
+    llm = get_agent_llm(role="critic", temperature=0)
 
     chain = critic_prompt | llm | JsonOutputParser()
 

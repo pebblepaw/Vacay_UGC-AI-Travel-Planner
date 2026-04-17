@@ -103,10 +103,17 @@ def response_formatter_node(state: AgentState) -> dict:
                 "next_node": "done",
             }
         if status in {"needs_user_payment", "needs_user_input"} and confirmation_url:
-            formatted = (
-                "已打开 trip.com 信息填充页，请在新窗口完成填写与支付。\n"
-                f"状态：{booking_result.get('status')}"
-            )
+            if status == "needs_user_input":
+                formatted = (
+                    "已在新窗口打开 Trip.com 继续页面。Trip.com 可能会先要求登录，"
+                    "登录后通常会回到旅客信息页。\n"
+                    f"状态：{booking_result.get('status')}"
+                )
+            else:
+                formatted = (
+                    "已打开 trip.com 信息填充页，请在新窗口完成填写与支付。\n"
+                    f"状态：{booking_result.get('status')}"
+                )
             chat_interrupt = {
                 "interrupt_type": "open_url",
                 "content": confirmation_url,
@@ -150,10 +157,17 @@ def response_formatter_node(state: AgentState) -> dict:
                 if failure_reason:
                     formatted = f"{formatted}\nDebug reason: {failure_reason}"
         elif booking_result.get("confirmation_url"):
-            formatted = (
-                "已打开 trip.com 信息填充页，请在新窗口完成填写与支付。\n"
-                f"状态：{booking_result.get('status')}"
-            )
+            if booking_result.get("status") == "needs_user_input":
+                formatted = (
+                    "已在新窗口打开 Trip.com 继续页面。Trip.com 可能会先要求登录，"
+                    "登录后通常会回到旅客信息页。\n"
+                    f"状态：{booking_result.get('status')}"
+                )
+            else:
+                formatted = (
+                    "已打开 trip.com 信息填充页，请在新窗口完成填写与支付。\n"
+                    f"状态：{booking_result.get('status')}"
+                )
             chat_interrupt = {
                 "interrupt_type": "open_url",
                 "content": booking_result.get("confirmation_url"),

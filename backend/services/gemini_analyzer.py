@@ -1,15 +1,22 @@
-"""
-Gemini Analyzer Service using Google Gemini 1.5 Pro.
+"""Gemini Analyzer Service using the google.genai SDK.
+
 Analyzes video content to extract locations, activities, and vibes.
 """
-import google.generativeai as genai
-from pathlib import Path
-import logging
-from typing import Optional
+
+from __future__ import annotations
+
+import asyncio
 import json
+import logging
+from pathlib import Path
 import re
+from typing import Any
+
+from google import genai
+from google.genai import types as genai_types
 
 from backend.config import settings
+from backend.llm import resolve_role_model
 from backend.models.schemas import GeminiAnalysisResult
 
 logger = logging.getLogger(__name__)
@@ -17,14 +24,14 @@ logger = logging.getLogger(__name__)
 
 class GeminiAnalyzerService:
     """Service for analyzing videos with Google Gemini."""
-    
+
     def __init__(self):
-        # Configure Gemini API
-        genai.configure(api_key=settings.GEMINI_API_KEY)
-        
-        # Use Gemini 2.0 Flash (supports video)
-        self.model = genai.GenerativeModel('gemini-2.0-flash')
-        
+        self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        self.model_name = resolve_role_model("video_analyzer", provider="gemini")
+        self.generation_config = genai_types.GenerateContentConfig(
+            response_mime_type="application/json",
+        )
+
         self.analysis_prompt = """
 Analyze this video and extract travel-related information. Focus on:
 
@@ -36,7 +43,7 @@ Analyze this video and extract travel-related information. Focus on:
    - mentioned_time: approximate timestamp if mentioned
    - priority: 'high' (must visit), 'normal' or 'low' (if skipped it's fine)
    - intensity: 'high' (active/hiking), 'normal' (walking), 'low' (relaxing)
-   - visit_duration: estimated minutes (60, 90, 120) based on activity type 
+   - visit_duration: estimated minutes (60, 90, 120) based on activity type
 
 2. **Activities**: What activities are shown or suggested? (eating, sightseeing, shopping, etc.)
 
@@ -65,90 +72,95 @@ Return your analysis as JSON with this structure:
 
 If the video is not travel-related, return: {"city": null, "locations": [], "activities": [], "vibes": [], "confidence": "low"}
 """
-    
+
+    @staticmethod
+    def _file_state_name(file_obj: Any) -> str:
+        state = getattr(file_obj, "state", None)
+        if state is None:
+            return ""
+        return getattr(state, "name", str(state))
+
+    async def _wait_for_uploaded_file(self, file_obj: Any) -> Any:
+        state_name = self._file_state_name(file_obj)
+        while state_name == "PROCESSING":
+            logger.debug("Waiting for Gemini video processing...")
+            await asyncio.sleep(2)
+            file_name = getattr(file_obj, "name", None)
+            if not file_name:
+                return file_obj
+            file_obj = self.client.files.get(name=file_name)
+            state_name = self._file_state_name(file_obj)
+
+        if state_name == "FAILED":
+            error = getattr(file_obj, "error", None)
+            raise ValueError(f"Gemini failed to process video: {error or state_name}")
+
+        return file_obj
+
+    @staticmethod
+    def _extract_json_data(result_text: str) -> dict[str, Any] | None:
+        data = None
+
+        try:
+            data = json.loads(result_text)
+        except json.JSONDecodeError:
+            pass
+
+        if data is None:
+            fence_match = re.search(r"```(?:json)?\s*\n?(.*?)```", result_text, re.DOTALL)
+            if fence_match:
+                try:
+                    data = json.loads(fence_match.group(1).strip())
+                except json.JSONDecodeError:
+                    pass
+
+        if data is None:
+            brace_start = result_text.find("{")
+            brace_end = result_text.rfind("}")
+            if brace_start != -1 and brace_end > brace_start:
+                try:
+                    data = json.loads(result_text[brace_start:brace_end + 1])
+                except json.JSONDecodeError:
+                    pass
+
+        return data
+
     async def analyze_video(self, video_path: str, video_title: str = "") -> GeminiAnalysisResult:
-        """
-        Analyze a video file using Gemini.
-        
-        Args:
-            video_path: Path to downloaded video file
-            video_title: Original video title (helps with context)
-            
-        Returns:
-            GeminiAnalysisResult with extracted information
-        """
+        """Analyze one downloaded video file with Gemini."""
+
+        uploaded_file: Any = None
         try:
             if not Path(video_path).exists():
                 raise FileNotFoundError(f"Video file not found: {video_path}")
-            
-            # Upload video to Gemini
-            logger.info(f"Uploading video to Gemini: {video_path}")
-            video_file = genai.upload_file(path=video_path)
-            
-            # Wait for processing to complete
-            import time
-            while video_file.state.name == "PROCESSING":
-                logger.debug("Waiting for video processing...")
-                time.sleep(2)
-                video_file = genai.get_file(video_file.name)
-            
-            if video_file.state.name == "FAILED":
-                raise ValueError(f"Gemini failed to process video: {video_file.state}")
-            
-            # Create prompt with context
+
+            logger.info("Uploading video to Gemini: %s", video_path)
+            uploaded_file = self.client.files.upload(file=video_path)
+            uploaded_file = await self._wait_for_uploaded_file(uploaded_file)
+
             full_prompt = self.analysis_prompt
             if video_title:
                 full_prompt = f"Video title: '{video_title}'\n\n{full_prompt}"
-            
-            # Generate analysis
-            logger.info(f"Analyzing video with Gemini...")
-            response = self.model.generate_content([full_prompt, video_file])
-            
-            # Parse JSON response
-            result_text = response.text.strip()
-            
-            # Extract JSON from the response — Gemini often wraps it in
-            # markdown fences and/or adds preamble text like "Here's the JSON:"
-            # Strategy: try raw parse first, then regex-extract from code fences,
-            # then look for the first { ... } block.
-            data = None
-            
-            # Attempt 1: direct parse (clean response)
-            try:
-                data = json.loads(result_text)
-            except json.JSONDecodeError:
-                pass
-            
-            # Attempt 2: extract from ```json ... ``` or ``` ... ``` fences
+
+            logger.info("Analyzing video with Gemini...")
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=[full_prompt, uploaded_file],
+                config=self.generation_config,
+            )
+
+            result_text = (getattr(response, "text", "") or "").strip()
+            data = self._extract_json_data(result_text)
+
             if data is None:
-                fence_match = re.search(r'```(?:json)?\s*\n?(.*?)```', result_text, re.DOTALL)
-                if fence_match:
-                    try:
-                        data = json.loads(fence_match.group(1).strip())
-                    except json.JSONDecodeError:
-                        pass
-            
-            # Attempt 3: find the outermost { ... } block
-            if data is None:
-                brace_start = result_text.find('{')
-                brace_end = result_text.rfind('}')
-                if brace_start != -1 and brace_end > brace_start:
-                    try:
-                        data = json.loads(result_text[brace_start:brace_end + 1])
-                    except json.JSONDecodeError:
-                        pass
-            
-            if data is None:
-                logger.warning(f"Failed to parse Gemini response as JSON: {result_text[:200]}")
+                logger.warning("Failed to parse Gemini response as JSON: %s", result_text[:200])
                 data = {
                     "city": None,
                     "locations": [],
                     "activities": [],
                     "vibes": [],
-                    "confidence": "low"
+                    "confidence": "low",
                 }
-            
-            # Convert to GeminiAnalysisResult
+
             return GeminiAnalysisResult(
                 locations=data.get("locations", []),
                 activities=data.get("activities", []),
@@ -156,43 +168,41 @@ If the video is not travel-related, return: {"city": null, "locations": [], "act
                 metadata={
                     "city": data.get("city"),
                     "confidence": data.get("confidence", "low"),
-                    "video_title": video_title
-                }
+                    "video_title": video_title,
+                },
             )
-            
+
         except Exception as e:
             logger.error(f"Error analyzing video {video_path}: {e}")
-            # Return empty result on error
             return GeminiAnalysisResult(
                 locations=[],
                 activities=[],
                 vibes=[],
-                metadata={"error": str(e), "video_title": video_title}
+                metadata={"error": str(e), "video_title": video_title},
             )
-    
+        finally:
+            file_name = getattr(uploaded_file, "name", None)
+            if file_name:
+                try:
+                    self.client.files.delete(name=file_name)
+                except Exception:
+                    logger.debug("Failed to delete Gemini upload %s", file_name, exc_info=True)
+
     async def analyze_multiple_videos(
         self,
-        video_data: list[dict]
+        video_data: list[dict],
     ) -> list[GeminiAnalysisResult]:
-        """
-        Analyze multiple videos.
-        
-        Args:
-            video_data: List of dicts with 'file_path' and 'title' keys
-            
-        Returns:
-            List of GeminiAnalysisResult objects
-        """
+        """Analyze multiple downloaded videos serially."""
+
         results = []
         for data in video_data:
             result = await self.analyze_video(
-                data.get('file_path'),
-                data.get('title', '')
+                data.get("file_path"),
+                data.get("title", ""),
             )
             results.append(result)
-        
+
         return results
 
 
-# Singleton instance
 gemini_analyzer = GeminiAnalyzerService()
