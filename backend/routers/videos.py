@@ -122,11 +122,14 @@ async def process_videos(
             for i, r in enumerate(successful_downloads)
         ]
         
-        trip = await itinerary_builder.build_itinerary(
-            video_metadata,
-            analysis_results,
-            request.trip_title
-        )
+        try:
+            trip = await itinerary_builder.build_itinerary(
+                video_metadata,
+                analysis_results,
+                request.trip_title
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         
         logger.info(f"Built itinerary: {trip.trip_id} - {trip.title}")
         

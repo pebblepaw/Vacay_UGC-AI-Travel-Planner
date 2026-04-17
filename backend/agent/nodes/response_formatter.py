@@ -13,6 +13,7 @@ If there are more steps in the plan, it routes back to the orchestrator.
 
 from langchain_core.messages import AIMessage
 from backend.agent.state import AgentState
+from backend.app_config import render_copy
 
 
 def _is_results_url(url: str) -> bool:
@@ -55,6 +56,8 @@ def response_formatter_node(state: AgentState) -> dict:
     booking_offers = state.get("booking_offers") or []
     selected_offer = state.get("selected_offer") or {}
     booking_context = state.get("booking_context") or {}
+    provider = str(booking_context.get("provider_hint") or "trip.com")
+    handoff_channel = str(booking_result.get("handoff_channel") or "")
     chat_interrupt = None
 
     # ── Find the last substantive AI response ──
@@ -92,39 +95,53 @@ def response_formatter_node(state: AgentState) -> dict:
         if status == "failed":
             reason = booking_result.get("reason") or "unknown reason"
             screenshot = booking_result.get("screenshot") or ""
-            formatted = (
-                "预订未能进入确认页。"
-                f"原因：{reason}\n"
-                f"链接：{confirmation_url}\n"
-                f"截图：{screenshot}"
+            formatted = render_copy(
+                "booking.checkout_failed",
+                reason=reason,
+                url=confirmation_url,
+                screenshot=screenshot,
             )
             return {
                 "messages": [AIMessage(content=formatted)],
                 "next_node": "done",
             }
         if status in {"needs_user_payment", "needs_user_input"} and confirmation_url:
-            if status == "needs_user_input":
-                formatted = (
-                    "已在新窗口打开 Trip.com 继续页面。Trip.com 可能会先要求登录，"
-                    "登录后通常会回到旅客信息页。\n"
-                    f"状态：{booking_result.get('status')}"
-                )
+            if handoff_channel == "live_browser":
+                if status == "needs_user_input":
+                    formatted = render_copy(
+                        "booking.checkout_live_browser_user_input",
+                        status=booking_result.get("status"),
+                    )
+                else:
+                    formatted = render_copy(
+                        "booking.checkout_live_browser_payment",
+                        status=booking_result.get("status"),
+                    )
             else:
-                formatted = (
-                    "已打开 trip.com 信息填充页，请在新窗口完成填写与支付。\n"
-                    f"状态：{booking_result.get('status')}"
-                )
-            chat_interrupt = {
-                "interrupt_type": "open_url",
-                "content": confirmation_url,
-                "status": "pending",
-            }
+                if status == "needs_user_input":
+                    formatted = render_copy(
+                        "booking.checkout_user_input",
+                        status=booking_result.get("status"),
+                    )
+                else:
+                    formatted = render_copy(
+                        "booking.checkout_payment",
+                        status=booking_result.get("status"),
+                    )
+                chat_interrupt = {
+                    "interrupt_type": "open_url",
+                    "content": confirmation_url,
+                    "status": "pending",
+                }
         elif status != "needs_user_payment":
             if booking_offers:
                 if selected_offer:
-                    formatted = f"当前已选：{selected_offer.get('id')}。"
+                    formatted = render_copy(
+                        "booking.selected_offer",
+                        offer_id=selected_offer.get("id"),
+                    )
                 else:
-                    formatted = "已找到可选航班，请选择一个。"
+                    formatted = render_copy("booking.found_options")
                     options = []
                     for item in booking_offers:
                         try:
@@ -143,36 +160,49 @@ def response_formatter_node(state: AgentState) -> dict:
                         )
                     chat_interrupt = {
                         "interrupt_type": "confirmation",
-                        "content": "请选择一个航班以继续订票。",
+                        "content": render_copy("booking.selection_prompt"),
                         "status": "pending",
                         "options": options,
                     }
             else:
                 failure_reason = str(booking_context.get("last_error") or "").strip()
-                formatted = (
-                    "还没有完成真实订票，也没有拿到可用的 trip.com 实时结果。"
-                    "请补充：出发/到达机场、日期、单程或往返、舱位、预算，"
-                    "或直接提供 trip.com 搜索链接。"
-                )
-                if failure_reason:
-                    formatted = f"{formatted}\nDebug reason: {failure_reason}"
+                if booking_context.get("attempted") or failure_reason:
+                    formatted = (
+                        f"{render_copy('booking.attempted_no_results', provider=provider)}\n"
+                        f"{render_copy('booking.refine_request', provider=provider)}"
+                    )
+                    if failure_reason:
+                        formatted = f"{formatted}\nDebug reason: {failure_reason}"
+                elif last_ai_content:
+                    formatted = last_ai_content
         elif booking_result.get("confirmation_url"):
-            if booking_result.get("status") == "needs_user_input":
-                formatted = (
-                    "已在新窗口打开 Trip.com 继续页面。Trip.com 可能会先要求登录，"
-                    "登录后通常会回到旅客信息页。\n"
-                    f"状态：{booking_result.get('status')}"
-                )
+            if handoff_channel == "live_browser":
+                if booking_result.get("status") == "needs_user_input":
+                    formatted = render_copy(
+                        "booking.checkout_live_browser_user_input",
+                        status=booking_result.get("status"),
+                    )
+                else:
+                    formatted = render_copy(
+                        "booking.checkout_live_browser_payment",
+                        status=booking_result.get("status"),
+                    )
             else:
-                formatted = (
-                    "已打开 trip.com 信息填充页，请在新窗口完成填写与支付。\n"
-                    f"状态：{booking_result.get('status')}"
-                )
-            chat_interrupt = {
-                "interrupt_type": "open_url",
-                "content": booking_result.get("confirmation_url"),
-                "status": "pending",
-            }
+                if booking_result.get("status") == "needs_user_input":
+                    formatted = render_copy(
+                        "booking.checkout_user_input",
+                        status=booking_result.get("status"),
+                    )
+                else:
+                    formatted = render_copy(
+                        "booking.checkout_payment",
+                        status=booking_result.get("status"),
+                    )
+                chat_interrupt = {
+                    "interrupt_type": "open_url",
+                    "content": booking_result.get("confirmation_url"),
+                    "status": "pending",
+                }
 
     return {
         "messages": [AIMessage(content=formatted)],

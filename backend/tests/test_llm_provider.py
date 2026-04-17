@@ -1,11 +1,12 @@
-import json
+import asyncio
 import sys
 import types
-import asyncio
 from pathlib import Path
 
 import pytest
+import yaml
 
+import backend.app_config as app_config_module
 import backend.llm as llm_module
 import backend.services.gemini_analyzer as gemini_analyzer_module
 from backend.services.automation import browser_use_worker as browser_use_module
@@ -34,42 +35,60 @@ def install_fake_chat_modules(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def write_role_config(path: Path) -> None:
+def write_app_config(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps(
+        yaml.safe_dump(
             {
-                "roles": {
-                    "default": "cheap_tools",
-                    "orchestrator": "high_reasoning",
-                    "critic": "high_reasoning",
-                    "travel_editor": "cheap_tools",
-                    "search_agent": "cheap_tools",
-                    "booking_agent": "cheap_tools",
-                    "chitchat": "cheap_text",
-                    "browser_use": "cheap_tools",
-                    "video_analyzer": "multimodal_analysis",
+                "assistant": {
+                    "language": "English",
                 },
-                "profiles": {
-                    "high_reasoning": {
-                        "gemini": "gemini-2.5-pro",
-                        "dashscope": "qwen-max",
+                "copy": {
+                    "booking": {
+                        "no_results": "I could not get usable live results from {provider}.",
+                    }
+                },
+                "llm": {
+                    "provider_preference": "auto",
+                    "roles": {
+                        "default": "cheap_tools",
+                        "orchestrator": "high_reasoning",
+                        "critic": "high_reasoning",
+                        "travel_editor": "cheap_tools",
+                        "search_agent": "cheap_tools",
+                        "booking_agent": "cheap_tools",
+                        "booking_intent": "high_reasoning",
+                        "chitchat": "cheap_text",
+                        "browser_use": "cheap_tools",
+                        "video_analyzer": "multimodal_analysis",
                     },
-                    "cheap_tools": {
-                        "gemini": "gemini-2.5-flash",
-                        "dashscope": "qwen-plus",
-                    },
-                    "cheap_text": {
-                        "gemini": "gemini-2.5-flash",
-                        "dashscope": "qwen-turbo",
-                    },
-                    "multimodal_analysis": {
-                        "gemini": "gemini-2.5-flash",
-                        "dashscope": "qwen2.5-vl-3b-instruct",
+                    "profiles": {
+                        "high_reasoning": {
+                            "gemini": "gemini-2.5-pro",
+                            "dashscope": "qwen-max",
+                        },
+                        "cheap_tools": {
+                            "gemini": "gemini-2.5-flash",
+                            "dashscope": "qwen-plus",
+                        },
+                        "cheap_text": {
+                            "gemini": "gemini-2.5-flash",
+                            "dashscope": "qwen-turbo",
+                        },
+                        "multimodal_analysis": {
+                            "gemini": "gemini-2.5-flash",
+                            "dashscope": "qwen2.5-vl-3b-instruct",
+                        },
                     },
                 },
-            }
+            },
+            sort_keys=False,
         )
     )
+
+
+def reset_config_cache() -> None:
+    app_config_module.load_app_config.cache_clear()
 
 
 def test_get_agent_llm_falls_back_to_gemini_when_dashscope_is_unavailable(
@@ -77,13 +96,13 @@ def test_get_agent_llm_falls_back_to_gemini_when_dashscope_is_unavailable(
     tmp_path: Path,
 ) -> None:
     install_fake_chat_modules(monkeypatch)
-    config_path = tmp_path / "llm_profiles.json"
-    write_role_config(config_path)
-    monkeypatch.setattr(llm_module.settings, "AGENT_LLM_CONFIG_PATH", config_path)
-    monkeypatch.setattr(llm_module.settings, "AGENT_LLM_PROVIDER", "aliyun")
+    config_path = tmp_path / "config.yaml"
+    write_app_config(config_path)
+    monkeypatch.setattr(app_config_module.settings, "APP_CONFIG_PATH", config_path)
+    monkeypatch.setattr(llm_module.settings, "APP_CONFIG_PATH", config_path)
     monkeypatch.setattr(llm_module.settings, "DASHSCOPE_API_KEY", None)
     monkeypatch.setattr(llm_module.settings, "GEMINI_API_KEY", "gemini-key")
-    monkeypatch.setattr(llm_module.settings, "GEMINI_MODEL", "gemini-2.0-flash")
+    reset_config_cache()
 
     llm = llm_module.get_agent_llm(role="travel_editor", temperature=0.4)
 
@@ -98,17 +117,18 @@ def test_get_agent_llm_uses_dashscope_when_available(
     tmp_path: Path,
 ) -> None:
     install_fake_chat_modules(monkeypatch)
-    config_path = tmp_path / "llm_profiles.json"
-    write_role_config(config_path)
-    monkeypatch.setattr(llm_module.settings, "AGENT_LLM_CONFIG_PATH", config_path)
-    monkeypatch.setattr(llm_module.settings, "AGENT_LLM_PROVIDER", "qwen")
+    config_path = tmp_path / "config.yaml"
+    write_app_config(config_path)
+    monkeypatch.setattr(app_config_module.settings, "APP_CONFIG_PATH", config_path)
+    monkeypatch.setattr(llm_module.settings, "APP_CONFIG_PATH", config_path)
     monkeypatch.setattr(llm_module.settings, "DASHSCOPE_API_KEY", "dashscope-key")
-    monkeypatch.setattr(llm_module.settings, "DASHSCOPE_MODEL", "qwen-max")
+    monkeypatch.setattr(llm_module.settings, "GEMINI_API_KEY", "gemini-key")
     monkeypatch.setattr(
         llm_module.settings,
         "DASHSCOPE_BASE_URL",
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
     )
+    reset_config_cache()
 
     llm = llm_module.get_agent_llm(role="orchestrator")
 
@@ -126,13 +146,14 @@ def test_browser_use_shim_uses_the_resolved_provider_and_model(
     tmp_path: Path,
 ) -> None:
     install_fake_chat_modules(monkeypatch)
-    config_path = tmp_path / "llm_profiles.json"
-    write_role_config(config_path)
-    monkeypatch.setattr(llm_module.settings, "AGENT_LLM_CONFIG_PATH", config_path)
-    monkeypatch.setattr(llm_module.settings, "AGENT_LLM_PROVIDER", "aliyun")
+    config_path = tmp_path / "config.yaml"
+    write_app_config(config_path)
+    monkeypatch.setattr(app_config_module.settings, "APP_CONFIG_PATH", config_path)
+    monkeypatch.setattr(llm_module.settings, "APP_CONFIG_PATH", config_path)
+    monkeypatch.setattr(browser_use_module.settings, "APP_CONFIG_PATH", config_path)
     monkeypatch.setattr(llm_module.settings, "DASHSCOPE_API_KEY", None)
     monkeypatch.setattr(llm_module.settings, "GEMINI_API_KEY", "gemini-key")
-    monkeypatch.setattr(llm_module.settings, "GEMINI_MODEL", "gemini-2.0-flash")
+    reset_config_cache()
 
     shim = browser_use_module.build_browser_use_llm()
 
@@ -147,12 +168,13 @@ def test_get_agent_llm_raises_when_no_provider_can_be_initialized(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    config_path = tmp_path / "llm_profiles.json"
-    write_role_config(config_path)
-    monkeypatch.setattr(llm_module.settings, "AGENT_LLM_CONFIG_PATH", config_path)
-    monkeypatch.setattr(llm_module.settings, "AGENT_LLM_PROVIDER", "auto")
+    config_path = tmp_path / "config.yaml"
+    write_app_config(config_path)
+    monkeypatch.setattr(app_config_module.settings, "APP_CONFIG_PATH", config_path)
+    monkeypatch.setattr(llm_module.settings, "APP_CONFIG_PATH", config_path)
     monkeypatch.setattr(llm_module.settings, "DASHSCOPE_API_KEY", None)
     monkeypatch.setattr(llm_module.settings, "GEMINI_API_KEY", "")
+    reset_config_cache()
 
     with pytest.raises(RuntimeError):
         llm_module.get_agent_llm(role="search_agent")
@@ -162,12 +184,12 @@ def test_resolve_agent_llm_config_uses_role_profile_models(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    config_path = tmp_path / "llm_profiles.json"
-    write_role_config(config_path)
-    monkeypatch.setattr(llm_module.settings, "AGENT_LLM_CONFIG_PATH", config_path)
-    monkeypatch.setattr(llm_module.settings, "AGENT_LLM_PROVIDER", "gemini")
+    config_path = tmp_path / "config.yaml"
+    write_app_config(config_path)
+    monkeypatch.setattr(app_config_module.settings, "APP_CONFIG_PATH", config_path)
+    monkeypatch.setattr(llm_module.settings, "APP_CONFIG_PATH", config_path)
     monkeypatch.setattr(llm_module.settings, "GEMINI_API_KEY", "gemini-key")
-    monkeypatch.setattr(llm_module.settings, "GEMINI_MODEL", "gemini-2.5-flash")
+    reset_config_cache()
 
     orchestrator_config = llm_module.resolve_agent_llm_config(role="orchestrator")
     worker_config = llm_module.resolve_agent_llm_config(role="travel_editor")
@@ -177,16 +199,53 @@ def test_resolve_agent_llm_config_uses_role_profile_models(
     assert worker_config.model == "gemini-2.5-flash"
 
 
+def test_app_config_exposes_language_and_copy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    write_app_config(config_path)
+    monkeypatch.setattr(app_config_module.settings, "APP_CONFIG_PATH", config_path)
+    reset_config_cache()
+
+    config = app_config_module.load_app_config()
+
+    assert config.assistant.language == "English"
+    assert "Respond in English" in app_config_module.get_assistant_language_instruction()
+    assert (
+        app_config_module.render_copy("booking.no_results", provider="trip.com")
+        == "I could not get usable live results from trip.com."
+    )
+
+
+def test_app_config_language_drives_prompt_instruction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    write_app_config(config_path)
+    raw = yaml.safe_load(config_path.read_text())
+    raw["assistant"]["language"] = "Chinese"
+    config_path.write_text(yaml.safe_dump(raw, sort_keys=False))
+    monkeypatch.setattr(app_config_module.settings, "APP_CONFIG_PATH", config_path)
+    reset_config_cache()
+
+    assert app_config_module.get_assistant_language_instruction() == (
+        "Respond in Chinese unless the user explicitly asks for another language."
+    )
+
+
 def test_gemini_analyzer_uses_google_genai_client_and_role_model(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    config_path = tmp_path / "llm_profiles.json"
-    write_role_config(config_path)
-    monkeypatch.setattr(llm_module.settings, "AGENT_LLM_CONFIG_PATH", config_path)
-    monkeypatch.setattr(gemini_analyzer_module.settings, "AGENT_LLM_CONFIG_PATH", config_path)
+    config_path = tmp_path / "config.yaml"
+    write_app_config(config_path)
+    monkeypatch.setattr(app_config_module.settings, "APP_CONFIG_PATH", config_path)
+    monkeypatch.setattr(llm_module.settings, "APP_CONFIG_PATH", config_path)
+    monkeypatch.setattr(gemini_analyzer_module.settings, "APP_CONFIG_PATH", config_path)
     monkeypatch.setattr(gemini_analyzer_module.settings, "GEMINI_API_KEY", "gemini-key")
-    monkeypatch.setattr(gemini_analyzer_module.settings, "GEMINI_MODEL", "gemini-2.5-flash")
+    reset_config_cache()
 
     captured: dict[str, object] = {}
 

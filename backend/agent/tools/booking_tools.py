@@ -13,8 +13,14 @@ def find_booking_options(
     origin: str,
     destination: str,
     departure_date: str,
+    adults: int,
+    origin_code: str = "",
+    origin_city_code: str = "",
+    destination_code: str = "",
+    destination_city_code: str = "",
     return_date: str = "",
-    adults: int = 1,
+    trip_type: str = "",
+    cabin: str = "",
     budget_limit: float = 0.0,
     provider_hint: str = "trip.com",
     max_results: int = 5,
@@ -26,8 +32,14 @@ def find_booking_options(
         origin: origin city/station
         destination: destination city/station
         departure_date: YYYY-MM-DD
+        origin_code: optional origin airport code
+        origin_city_code: optional origin city code
+        destination_code: optional destination airport code
+        destination_city_code: optional destination city code
         return_date: optional YYYY-MM-DD
+        trip_type: one_way or round_trip
         adults: number of adults
+        cabin: cabin preference
         budget_limit: 0 means no budget cap
         provider_hint: provider preference, e.g. trip.com
         max_results: maximum options to return

@@ -4,20 +4,30 @@ Test date: April 17, 2026.
 
 ## Checklist
 
-- [x] Pull and test the browser-booking PR
-- [x] Make the booking path run on Gemini and DashScope/Qwen
-- [x] Migrate video analysis to `google.genai`
-- [x] Split model choice by role with config
-- [x] Fix video import so it fails honestly on analyzer errors
-- [x] Fix map location resolution so new imports pin real locations
-- [ ] Make meal searches use the itinerary around the noon slot
-- [ ] Make chat reply language configurable
-- [ ] Parse real booking requests from normal English follow-ups
-- [ ] Make the chat input expand as the user types
+1. [x] Keep one real browser session from search to handoff
+2. [ ] Put booking state in LangGraph, not module memory
+3. [x] Migrate off `google.generativeai`
+4. [x] Split model choice by role, not just by provider
+5. [ ] Turn Trip.com into the first provider adapter
+6. [ ] Treat OpenAI Agents SDK as a separate runtime, not a LangGraph add-on
+7. [x] Add real browser E2E coverage
+8. [x] Make meal searches use the itinerary, not just the trip title
+9. [x] Put model and language settings in one editable YAML file
+10. [x] Use an LLM to normalize booking requests into a fixed schema
+11. [x] Replace the single-line chat input with an auto-growing textarea
+12. [x] Validate imported POIs against the video's city or country scope
+13. [x] Drop unresolved POIs instead of keeping `(0, 0)` placeholders
+14. [x] Remove the last language leak and make the active server obvious
+15. [x] Write startup logs to a file so local debugging is easy
+16. [x] Make the frontend map load with the real Mapbox token and fail loudly when it cannot
+17. [x] Keep meal insertions inside real clock time and preserve the requested meal window
+18. [x] Keep chat bubbles and the chat sheet inside the viewport on small screens
 
-I pulled the latest `main`, including the booking/browser PR, then tested the flow locally on port `8010` for the backend and `3000` for the frontend.
+Latest branch verification ran on `feature-items-8-11` with backend `8017` and frontend `3004`.
 
-I used `Sample_Inputs/TikTok-Links.md`, specifically the Roady TikTok URL. The trip import completed, but the local video-analysis key in `.env` was rejected by Gemini, so that sample produced an empty trip. I still used that trip for the booking E2E, because the flight flow does not depend on POIs being present.
+I used `Sample_Inputs/TikTok-Links.md`, specifically the Mia-and-the-World Queenstown TikTok URL. The import completed, the frontend map loaded with a real Mapbox token, and the imported trip showed pinned locations. I then asked for lunch, got itinerary-anchored suggestions near Kamana Lakehouse, added one option, and confirmed the saved time stayed inside a real lunch window at `12:00 - 13:30` instead of drifting into `26:..`.
+
+I also ran the flight flow live: asked for flights from Singapore, got 8 Trip.com options, selected one, and confirmed the backend kept a real headed Playwright window open on Trip.com's traveler page. The chat now tells the user to continue in that live browser window instead of faking a fresh-tab handoff.
 
 ## Bottom line
 
@@ -28,23 +38,23 @@ What worked in my live test:
 - The chat agent understood a natural-language flight request.
 - It fetched 8 real Trip.com flight options.
 - The UI showed those options and let me choose one.
-- The backend Playwright checkout runner reached Trip.com's passenger/contact page in its own automated browser session.
-- The frontend then opened a Trip.com continuation tab for the user.
+- The backend Playwright checkout runner reached Trip.com's traveler page in a live headed browser session.
+- The chat then told the user to continue in that visible Playwright window.
 
 What did not fully hold up:
 
-- The user-facing tab did not open directly on the passenger form in my test. It opened on Trip.com's sign-in page, with a `backUrl` to the passenger page.
-- That means the backend automation session and the user's browser session are not the same session.
-- So the claim "it brings the user to the booking page" is only partly true. The automation reached that page. The user saw a login gate first.
+- This works as a local headed-browser workflow. It is not yet a remote handoff system.
+- If the app runs on a server the user cannot see, a live local Playwright window is not enough. That case still needs browser streaming or another shared-session design.
+- The flow is still Trip.com-flight-specific, not a general commerce handoff.
 
 The evidence is clear:
 
 - Backend automation reached the passenger page:
-  - `backend/data/booking_artifacts/checkout_pre_payment_20260417_045945.png`
-- User-facing Trip.com tab opened on sign-in:
-  - `.playwright-cli/page-2026-04-16T21-01-02-973Z.png`
-- Main app after selection:
-  - `.playwright-cli/page-2026-04-16T21-00-34-022Z.png`
+  - `backend/data/booking_artifacts/checkout_pre_payment_20260417_211051.png`
+- Main app after selection told the user to continue in the live browser:
+  - chat reply: `I left the live Trip.com browser window open on the traveler page. Continue in that visible Playwright window.`
+- Logs confirm live handoff mode:
+  - `handoff_channel': 'live_browser'`
 
 ## What It Can Do
 
@@ -54,8 +64,8 @@ Right now, the real, verified path is:
 2. Search Trip.com for flights.
 3. Show live flight options in the chat UI.
 4. Accept a user selection.
-5. Drive a backend Playwright browser into the Trip.com checkout flow.
-6. Stop before payment.
+5. Drive a headed Playwright browser into the Trip.com traveler flow.
+6. Leave that live browser open for the user to continue before payment.
 
 That is real.
 
@@ -66,7 +76,7 @@ It is not a general-purpose commerce agent yet.
 - It is not proven on Expedia, Booking.com, Agoda, airline sites, or arbitrary ticket sites.
 - It is not proven for zoo tickets, museum tickets, tours, or timed-entry attractions.
 - The tool schema mentions `train`, `hotel`, and `attraction`, but the real automation is still heavily Trip.com-flight-specific.
-- It does not preserve the live browser session from backend automation into the user's browser.
+- It does not stream that live browser session to a remote user. Today this assumes the user can see the machine running Playwright.
 - It does not complete payment. That guardrail is correct and should stay.
 
 So the short answer is:
@@ -98,7 +108,7 @@ Strengths:
 
 Weak points:
 
-- Session handoff is the main flaw. The backend reaches the traveler page, but the user's browser gets a fresh Trip.com session.
+- Session handoff is still local-only. The backend reaches the traveler page and leaves a real window open, but that is only useful when the user can see that machine.
 - The system uses a mix of generic names and Trip.com-specific code. That makes the feature look broader than it is.
 - Booking context is cached in memory in `backend/routers/chat.py`, so it is fragile across restarts and does not scale cleanly.
 - The sample-input ingest path still depends on deprecated Gemini code and a valid Gemini key.
@@ -108,6 +118,8 @@ Weak points:
 I would not rewrite the whole project. I would fix the browser/session boundary, move booking state into durable graph state, then split model choice and provider support into clear layers.
 
 ### 1. Keep one real browser session from search to handoff
+
+Status: done in this branch for local runs. Search and checkout now reuse one live headed Playwright session, and the handoff message tells the user to continue in that visible window instead of opening a fake fresh-tab continuation link.
 
 The code does not sign in to Trip.com today. It does not need auth to get prices. It opens public Trip.com search URLs and scrapes the results page.
 
@@ -150,12 +162,49 @@ What to do:
 - Reuse the same persistent context in both the search step and the checkout step. Right now search and checkout are two unrelated browser sessions.
 - Store the booking `thread_id` or `session_id` in graph state, not just the selected offer.
 - For local use, stop opening a plain URL after checkout. Leave the real headed Playwright window open and tell the user to continue there. That is the same session. A plain URL is not.
+- Stop treating the search-results page as a valid offer handoff. The current scraper in `backend/services/automation/browser_use_worker.py` falls back to `page_url` when it cannot extract a real offer link, so many offers are not true offer pages at all.
+
+This one line is the problem:
+
+```python
+deeplink = f"{page_url}#{card_id}" if card_id else page_url
+```
+
+That fallback is enough for "show some options in chat." It is not enough for "take me to the exact booking page for option 3."
+
+The current flow after selection is:
+
+```text
+results page
+→ scrape card text
+→ save page URL plus optional card selector
+→ reopen that URL in a fresh browser
+→ try to click the same card again
+→ if the selector fails or the page reorders, stay on results
+```
+
+That is exactly what happened in the manual log:
+
+- `browser_use_worker` saved offers from `showfarefirst`
+- `playwright_checkout` reopened that `showfarefirst` URL
+- checkout ended with `Still on search results page; checkout form not reached.`
+
+What to change on top of the session work:
+
+- Change the offer contract. A selected offer needs one of these before we call it actionable:
+  - a real provider deeplink to the chosen fare, or
+  - a reproducible provider-specific selection recipe that has already been verified against the live page
+- If we only have `page_url` plus a fragile selector, mark the offer as `search_result_only`. Do not promise direct handoff.
+- Save stronger offer identity from the search page: fare id, airline, departure time, arrival time, price, and any provider-side card key.
+- In checkout, verify that the reopened page still matches the chosen fare before clicking forward.
+- If the fare cannot be re-identified, tell the user the truth: "I found the offer on the search page, but I could not reopen that exact fare."
 
 Watch out:
 
 - A persistent profile only helps if the same browser context survives from search to user handoff.
 - If the app ever runs remotely, a plain browser tab on the user's machine still will not share the server browser's cookies. Then you need a streamable browser session, not `window.open`.
 - One profile directory cannot be opened by two Chromium instances at once.
+- Even with one persistent session, results-page URLs are not stable offer identities. Session reuse fixes auth. It does not fix weak offer handoff data.
 
 ### 2. Put booking state in LangGraph, not module memory
 
@@ -460,6 +509,8 @@ This feature needs a standing regression suite.
 
 ### 8. Make meal searches use the itinerary, not just the trip title
 
+Status: done in this branch. Meal searches now look at the trip day, the nearby timed stops, and the meal window before they build the search instruction. Generic restaurant and meal wording now falls back to the noon anchor instead of searching the whole city blind.
+
 The lunch search has no idea where noon sits in the plan. It only gets the trip title as location context, so it searches a whole city or region and then asks the user to name an area or a nearby activity.
 
 The problem is in `backend/agent/nodes/search_agent.py`. `_get_trip_city()` returns `trip.title`, and nothing in the search path looks at `time_slot`, the POI before lunch, or the POI after lunch. The orchestrator prompt says "include the city/area," but there is no code that computes that area from the itinerary.
@@ -484,6 +535,8 @@ Tests:
 - Dinner query uses evening anchors, not the noon window.
 
 ### 9. Put model and language settings in one editable YAML file
+
+Status: done in this branch. `config/config.yaml` is now the one place for role-to-model mapping, reply language, and fixed copy. Runtime code reads that file through `backend/app_config.py`, and `assistant.language` now directly drives the prompt language instruction.
 
 The project still spreads user-editable behavior across Python constants, environment defaults, and one JSON profile file. That makes simple changes harder than they should be. A user should not need to read `backend/llm.py` to change the orchestrator model or the assistant language.
 
@@ -551,6 +604,8 @@ Tests:
 - Missing YAML keys fail with a clear validation error.
 
 ### 10. Use an LLM to normalize booking requests into a fixed schema
+
+Status: done in this branch. The booking flow now uses an LLM normalizer that returns a validated `BookingIntent`, and the executor no longer hard-codes `return_date` or `adults`. The booking path also no longer depends on a keyword gate before it runs the normalizer.
 
 The booking bug is not that the system lacks a schema. The bug is that the schema is currently filled by regexes and tiny alias maps. That is why a normal follow-up message fails.
 
@@ -621,6 +676,8 @@ Tests:
 
 ### 11. Replace the single-line chat input with an auto-growing textarea
 
+Status: done in this branch. The chat box now uses a textarea that grows with content, sends on `Enter`, and keeps `Shift+Enter` for a newline.
+
 The chat box does not expand because it is not a textarea. `frontend/src/components/trip/ChatSidebar.tsx` renders `<Input>`, so the field is single-line by design.
 
 What to do:
@@ -641,14 +698,297 @@ Tests:
 - `Enter` sends.
 - `Shift+Enter` inserts a newline.
 
+### 12. Validate imported POIs against the video's city or country scope
+
+Status: done in this branch. Import now derives a usable scope from the analyzed videos, validates geocoded results against that scope, retries with stricter scoped queries, and drops out-of-scope matches.
+
+This is the next real data-quality gap. The importer extracts a city name, but the geocoder does not check whether the returned match is actually inside that city or even inside the right country.
+
+The saved Shanghai trips prove it:
+
+- `To Summer` was saved in Italy.
+- `Wukang Building` resolved to North Carolina in a direct geocode probe.
+- `Yong's Dumplings` resolved to Guangxi, not Shanghai.
+- `Cafe de Marzo` landed in Colombia.
+
+The current path is too trusting. `backend/services/itinerary_builder.py` passes `name` and one loose `city` string into `tavily_location.geocode_location(...)`, then accepts the first hit. `backend/services/tavily_location.py` has country hints for many places, but it does not even include `china` or `shanghai`, and it never rejects a match that lands outside the intended scope.
+
+What to do:
+
+- Add a first pass that decides the location scope for the video set before any POI geocoding starts.
+- Save that scope in structured form, not just one free-text city string. Example: `scope_type=city`, `city=Shanghai`, `country=China`, `country_code=cn`.
+- Update the analyzer prompt to return `city`, `country`, and `scope_confidence`.
+- Add a validation step after each geocode result. If the result is outside the chosen city or country, mark it invalid.
+- Retry invalid matches with a stricter query that forces the city and country. Example: `"To Summer Shanghai China"`.
+- If the retry still lands outside scope, send that POI to a review step.
+- Add a dedicated ingest critic for imported POIs. This should not reuse the chat critic as-is. It needs to validate `name → resolved place → scope` before the trip is saved.
+- If the ingest critic cannot get a valid in-scope match after the retry pass, drop the POI.
+
+Why I do not want to use the existing chat critic for this:
+
+- The current critic in `backend/agent/nodes/critic.py` only reviews chat-time itinerary edits.
+- Video import happens earlier, in `backend/routers/videos.py` and `backend/services/itinerary_builder.py`.
+- This needs a dedicated import-validation phase, not a post-hoc chat fix.
+
+Watch out:
+
+- Some videos are about a region, not one city. Example: `Lake Como`, `South of France`, `Bali`.
+- The scope resolver needs to choose the right width. Sometimes the right rule is `must be in Shanghai`. Sometimes it is `must be in China`. Sometimes it is `must be in Lombardy`.
+- Do not reject a valid regional POI just because the video title used one city as shorthand.
+
+Tests:
+
+- A Shanghai video rejects a match in Italy or North Carolina.
+- A Shanghai video retries with `Shanghai, China` before giving up.
+- A regional video like `South of France` accepts places inside the chosen region but rejects places outside France.
+
+### 13. Drop unresolved POIs instead of keeping `(0, 0)` placeholders
+
+Status: done in this branch. Failed geocodes are no longer saved as fake `(0, 0)` POIs, and import now fails honestly if scope validation removes everything.
+
+The map bug is not only a frontend problem. The backend is storing unresolved places as real POIs with fake coordinates.
+
+The current code in `backend/services/itinerary_builder.py` does this:
+
+```python
+if not geo_data:
+    coords = (0.0, 0.0)
+```
+
+The frontend then hides them in `frontend/src/components/trip/MapView.tsx`:
+
+```tsx
+const validPOIs = allPOIs.filter(poi => poi.coords[0] !== 0 && poi.coords[1] !== 0);
+```
+
+That is why the timeline can still show a place that the map silently drops.
+
+What to do:
+
+- Stop creating a POI when geocoding fails.
+- Keep a rejected-location list during import so we can log what got dropped and why.
+- Include that rejected list in the processing response or trip metadata so the UI can show `3 places could not be pinned and were removed`.
+- If too many POIs are dropped, fail the import instead of pretending the trip is complete.
+- Use the scope-validation retry pass from item 12 before deciding a POI is unresolved.
+
+Watch out:
+
+- Do not drop the whole trip because one vanity boutique cannot be matched.
+- Do fail the trip if most of the places cannot be resolved. A half-broken itinerary is worse than an honest failure.
+
+Tests:
+
+- An unresolved POI is absent from both the saved trip and the map.
+- A trip with one failed POI still saves cleanly.
+- A trip with mostly failed POIs returns an import error instead of a misleading result.
+
+### 14. Remove the last language leak and make the active server obvious
+
+Status: done in this branch. User-facing booking copy now comes from `config/config.yaml`, the live worktree responds in English, and dev responses expose the active workspace and config path.
+
+The exact Chinese booking failure string the user pasted is not coming from the current worktree code. It still exists in `main`, in `backend/agent/nodes/response_formatter.py`. The live worktree formatter now reads English copy from `config/config.yaml`.
+
+I verified the current running worktree process:
+
+- Backend PID `24217`
+- CWD `/Users/pebblepaw/Documents/CODING_PROJECTS/VACAY/.codex/feature-items-8-11`
+- Frontend PID `24267`
+- CWD `/Users/pebblepaw/Documents/CODING_PROJECTS/VACAY/.codex/feature-items-8-11/frontend`
+
+I also found multiple live servers on this machine at the same time:
+
+- `8015`
+- `8010`
+- `3001`
+- `3000`
+
+That makes it easy to open one frontend and talk to the wrong backend, or to remember an old tab and think the new branch is replying.
+
+What to do:
+
+- Delete the old Chinese booking fallback from `main` once this branch is merged.
+- Add a startup banner that prints the checkout path, backend port, frontend port, and config file path on boot.
+- Add a tiny debug panel or footer badge in dev mode that shows `backend: 8010` and `workspace: .codex/feature-items-8-11`.
+- Add a response header on the backend like `X-Vacay-Workspace` in dev mode so a quick `curl -I` tells you which checkout answered.
+- Keep non-user-facing Chinese keywords if they help parsing or DOM automation. Remove only the user-facing hard-coded copy.
+
+Watch out:
+
+- The worktree still contains Chinese keywords in booking detection and Playwright selectors. That is fine. They are not the user-facing bug.
+- The bug is the old hard-coded response text plus server confusion.
+
+Tests:
+
+- `Can you book me a flight` returns English on the worktree backend.
+- A dev response header shows the active checkout path.
+- The startup banner prints the exact config path in use.
+
+### 15. Write startup logs to a file so local debugging is easy
+
+Status: done in this branch. `start.sh` now writes repo-local backend and frontend logs, keeps streaming them to the terminal, and prints the log paths on boot.
+
+Right now `start.sh` prints everything to the terminal and nowhere else. That is why there was no clean log file to inspect after the manual test.
+
+What to do:
+
+- Make `start.sh` write to `logs/backend.log` and `logs/frontend.log`.
+- Keep streaming to the terminal too. Use `tee`, not file-only logging.
+- Rotate or timestamp the files so one run does not overwrite another.
+- Print the log paths on startup.
+- Add one helper command in the README: `tail -f logs/backend.log`.
+
+The exact commands I would want users to have are:
+
+```bash
+tail -f logs/backend.log
+tail -f logs/frontend.log
+```
+
+And for process identity:
+
+```bash
+lsof -iTCP -sTCP:LISTEN -n -P | rg ':(3000|3001|3002|8010|8015|8016)'
+lsof -p <PID> | rg ' cwd '
+```
+
+Watch out:
+
+- The backend is started in the background by `start.sh`, so if you do not capture stdout yourself, the log history is gone when you close that terminal.
+- Write the logs inside the repo-local worktree so each branch keeps its own run history.
+
+Tests:
+
+- `start.sh` creates log files on every run.
+- `tail -f logs/backend.log` shows live request and error output.
+- The startup message prints the current workspace and log paths.
+
+### 16. Make the frontend map load with the real Mapbox token and fail loudly when it cannot
+
+Status: done in this branch. `start.sh` now exports `VITE_MAPBOX_PUBLIC`, the frontend map loads in dev, and the UI shows a visible error state if that token is missing.
+
+The map is not failing because of bad geocoded pins. It is failing earlier. The frontend never gets a Mapbox token.
+
+`frontend/src/components/trip/MapView.tsx` reads:
+
+```ts
+const mapboxToken = import.meta.env.VITE_MAPBOX_PUBLIC;
+```
+
+But `start.sh` only exports `VITE_API_URL`. It never exports `VITE_MAPBOX_PUBLIC`. The root `.env` file has `MAPBOX_PUBLIC`, not `VITE_MAPBOX_PUBLIC`. Vite does not expose plain `MAPBOX_PUBLIC` to browser code.
+
+That means the map component hits this branch and returns before it creates a map:
+
+```ts
+if (!mapboxToken) {
+  console.error('Mapbox token not found');
+  return;
+}
+```
+
+So the backend can geocode with Mapbox while the browser still shows no map at all. These are two different token paths.
+
+What to do:
+
+- Export `VITE_MAPBOX_PUBLIC="$MAPBOX_PUBLIC"` in `start.sh` when the frontend dev server starts.
+- Add a `.env.example` line that makes this frontend requirement obvious.
+- Change `MapView.tsx` so a missing token shows a visible error card in the map area, not just a console error.
+- Log the active frontend map token mode on startup. Example: `Map frontend token: present`.
+- Add one frontend smoke test that fails if the map component renders without a token and fails silently.
+
+Watch out:
+
+- This is a frontend config bug, not a Mapbox API outage.
+- The `422` entries in the backend log are from geocoding bad address strings. They do not explain a completely blank basemap.
+
+Tests:
+
+- `start.sh` makes `import.meta.env.VITE_MAPBOX_PUBLIC` available in dev.
+- The map renders a basemap when the token is present.
+- The UI shows a visible map-config error when the token is missing.
+
+### 17. Keep meal insertions inside real clock time and preserve the requested meal window
+
+Status: done in this branch. Replanning now uses real day boundaries, preserves meal windows, and refuses impossible schedules instead of emitting `26:..` timestamps.
+
+The `26:46` time is real saved data, not a rendering glitch.
+
+Saved trip evidence from `trip_6b35b7beec09`:
+
+- `Doubtful Sound Cruise | 09:00 - 12:00`
+- `Glenorchy Air Scenic Flight | 14:16 - 15:16`
+- `Hell's Gate Geothermal Experience | 18:16 - 19:46`
+- `Dive Tatapouri Reef Tour | 22:46 - 23:46`
+- `Akin | 26:46 - 28:16`
+
+The replanner in `backend/agent/nodes/travel_tool_executor.py` just keeps adding visit time and travel time. It never stops at midnight, never splits the day, and never preserves a requested lunch slot once `replan_day` runs.
+
+That creates two separate bugs:
+
+- impossible clock times like `26:46`
+- a lunch request that drifts into dinner because geography wins over the meal window
+
+The current day was already bad before lunch was added. It spans Queenstown, Rotorua, and Tatapouri in one "day." Then `replan_day` added real drive time on top of that and pushed the food stop past midnight.
+
+What to do:
+
+- Add a hard day boundary in the replanner. If a day would run past a real cutoff like `22:00`, stop and fail the replan instead of emitting `26:46`.
+- Add a `time_anchor` or `locked_time_window` on user-requested meal insertions. For lunch, that should stay near `12:00 - 14:00` unless the agent explicitly asks to move something else.
+- Teach `replan_day` to preserve locked meal windows and only reorder around them.
+- If a day is already impossible before the meal is added, do not silently jam the restaurant into the same day. Either:
+  - move the weakest POI out, or
+  - ask the user which stop to replace
+- Run the critic after replanning with one hard failure rule: any time later than `23:59` is invalid output.
+
+This bug also shows the limit of item 8. Meal search is now anchored to the itinerary. Meal insertion is still not.
+
+Watch out:
+
+- If a trip import already groups distant cities into one day, meal insertion will keep exposing that bad day structure until import validation improves.
+- Preserving a lunch window means the replanner needs more than category buckets. It needs fixed constraints.
+
+Tests:
+
+- Adding lunch never creates a time later than `23:59`.
+- Adding lunch keeps the food stop inside the midday window unless the user approves a change.
+- Replanning an impossible day returns an error instead of impossible clock times.
+
+### 18. Keep chat bubbles and the chat sheet inside the viewport on small screens
+
+Status: done in this branch. The sheet and bubbles now keep their width caps on small screens, and long text wraps instead of pushing the layout off-screen.
+
+The chat overflow is a layout bug in the current component tree.
+
+`frontend/src/components/trip/ChatSidebar.tsx` gives the agent bubble both `max-w-[80%]` and `max-w-none` in the same class list. The last class wins, so the bubble can grow past the sheet width. The bubbles also do not force long text to wrap.
+
+That means a long sentence, long Markdown line, or long URL can push the bubble and the sheet content outside the viewport.
+
+What to do:
+
+- Remove the conflicting `max-w-none` from the agent bubble container.
+- Add `break-words` and `overflow-wrap:anywhere` to both user and agent bubbles.
+- Add a max width that is smaller on mobile. Example: `max-w-[85%]` on desktop and `max-w-[92%]` inside the sheet on narrow screens.
+- Make interrupt option cards respect the same width rules.
+- Add one Playwright viewport test for a narrow phone width and one long-message fixture.
+
+Watch out:
+
+- Markdown content can contain long unbroken strings. Plain `word-break: break-word` is not always enough.
+- Fix the bubble width and the text wrapping together. Doing only one of them still leaves overflow cases.
+
+Tests:
+
+- A long user message stays inside the sheet on a phone-width viewport.
+- A long agent message with Markdown stays inside the sheet.
+- A long URL or airport code string wraps instead of pushing the layout off-screen.
+
 ## Final Verdict
 
 The new browser feature is real enough to demo. It is not yet honest enough to sell as a generic booking agent.
 
 The strongest claim you can make today is this:
 
-VACAY can search Trip.com flights from chat, show live options, take a choice, and drive a backend browser into the Trip.com pre-payment flow.
+VACAY can search Trip.com flights from chat, show live options, take a choice, and keep a headed Playwright browser open on Trip.com's traveler page for the user to continue locally.
 
 The claim you should not make yet is this:
 
-VACAY can reliably bring the user straight into a live booking page on any site and let them finish checkout there.
+VACAY can reliably hand off checkout on any travel site or any remote deployment without more session-sharing work.

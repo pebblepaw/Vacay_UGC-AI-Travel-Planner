@@ -1,0 +1,59 @@
+assistant:
+  language: English
+
+llm:
+  provider_preference: auto
+  roles:
+    default: cheap_tools
+    orchestrator: high_reasoning
+    critic: high_reasoning
+    travel_editor: cheap_tools
+    search_agent: cheap_tools
+    booking_agent: cheap_tools
+    booking_intent: high_reasoning
+    chitchat: cheap_text
+    browser_use: cheap_tools
+    video_analyzer: multimodal_analysis
+  profiles:
+    high_reasoning:
+      gemini: gemini-2.5-pro
+      dashscope: qwen-max
+    cheap_tools:
+      gemini: gemini-2.5-flash
+      dashscope: qwen-plus
+    cheap_text:
+      gemini: gemini-2.5-flash
+      dashscope: qwen-turbo
+    multimodal_analysis:
+      gemini: gemini-2.5-flash
+      dashscope: qwen2.5-vl-3b-instruct
+
+copy:
+  booking:
+    no_results: "I could not get usable live results from {provider}."
+    attempted_no_results: "I already tried live {provider} search, but I still do not have usable results."
+    refine_request: "Please share the origin airport, destination airport or gateway city, departure date, trip type, cabin, number of adults, budget, or a direct {provider} search URL."
+    missing_details: "I still need {fields} before I can search {provider}."
+    selection_prompt: "Choose a flight to continue."
+    found_options: "I found flight options. Choose one to continue."
+    selected_offer: "Current selection: {offer_id}."
+    checkout_failed: |-
+      The booking flow did not reach the confirmation page.
+      Reason: {reason}
+      Link: {url}
+      Screenshot: {screenshot}
+    checkout_user_input: |-
+      I opened the Trip.com continue page in a new window. Trip.com may ask you to sign in first, then return you to the traveler form.
+      Status: {status}
+    checkout_payment: |-
+      I opened the Trip.com traveler details page in a new window. Finish the form and payment there.
+      Status: {status}
+    checkout_live_browser_user_input: |-
+      I left the live Trip.com browser window open on the traveler page. Continue in that visible Playwright window.
+      Status: {status}
+    checkout_live_browser_payment: |-
+      I left the live Trip.com browser window open at the pre-payment step. Review the fare and finish there.
+      Status: {status}
+    guard_no_completion: "I do not have real live {provider} results yet, so I cannot claim the booking is done."
+  general:
+    today: "Today is {date}."

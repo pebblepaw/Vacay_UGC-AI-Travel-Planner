@@ -11,6 +11,8 @@ from pathlib import Path
 import re
 from typing import Any
 
+from backend.services.automation.live_booking_sessions import live_booking_sessions
+
 
 class PlaywrightCheckoutRunner:
     """Automates deterministic checkout steps with Playwright."""
@@ -30,87 +32,159 @@ class PlaywrightCheckoutRunner:
 
         Returns screenshot path and status metadata.
         """
-        try:
-            from playwright.async_api import async_playwright
-        except Exception as exc:
+        live_session_id = str(offer.get("live_session_id") or "").strip()
+        live_session = await live_booking_sessions.get(live_session_id)
+        requires_live_session = bool(offer.get("requires_live_session"))
+
+        if requires_live_session and live_session is None:
             return {
                 "status": "failed",
-                "reason": f"Playwright not installed: {exc}",
-                "confirmation_url": "",
+                "reason": (
+                    "This fare only had a live session handle from the Trip.com results page. "
+                    "The live session is no longer available, so I cannot reopen the exact booking page."
+                ),
+                "confirmation_url": str(offer.get("results_page_url") or ""),
                 "screenshot": "",
             }
+
+        async_playwright = None
+        if live_session is None:
+            try:
+                from playwright.async_api import async_playwright as imported_async_playwright
+            except Exception as exc:
+                return {
+                    "status": "failed",
+                    "reason": f"Playwright not installed: {exc}",
+                    "confirmation_url": "",
+                    "screenshot": "",
+                }
+            async_playwright = imported_async_playwright
 
         deeplink = offer.get("deeplink", "")
         if not deeplink:
-            return {
-                "status": "failed",
-                "reason": "Selected offer has no deeplink.",
-                "confirmation_url": "",
-                "screenshot": "",
-            }
+            if live_session is None:
+                return {
+                    "status": "failed",
+                    "reason": "Selected offer has no deeplink.",
+                    "confirmation_url": str(offer.get("results_page_url") or ""),
+                    "screenshot": "",
+                }
         is_results_deeplink = self._is_results_page(deeplink)
+        results_page_url = str(offer.get("results_page_url") or "")
+        using_live_browser = live_session is not None
+        browser = None
 
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=headless)
-            page = await browser.new_page()
+        if live_session is not None:
+            page = live_session.page
+        else:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=headless)
+                page = await browser.new_page()
+                return await self._run_checkout_flow(
+                    page=page,
+                    browser=browser,
+                    offer=offer,
+                    traveler=traveler,
+                    headless=headless,
+                    skip_fill=skip_fill,
+                    deeplink=deeplink,
+                    is_results_deeplink=is_results_deeplink,
+                    results_page_url=results_page_url,
+                    using_live_browser=False,
+                )
+
+        return await self._run_checkout_flow(
+            page=page,
+            browser=browser,
+            offer=offer,
+            traveler=traveler,
+            headless=headless,
+            skip_fill=skip_fill,
+            deeplink=deeplink,
+            is_results_deeplink=is_results_deeplink,
+            results_page_url=results_page_url,
+            using_live_browser=using_live_browser,
+        )
+
+    async def _run_checkout_flow(
+        self,
+        *,
+        page: Any,
+        browser: Any,
+        offer: dict[str, Any],
+        traveler: dict[str, str],
+        headless: bool,
+        skip_fill: bool,
+        deeplink: str,
+        is_results_deeplink: bool,
+        results_page_url: str,
+        using_live_browser: bool,
+    ) -> dict[str, Any]:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        before_path = self.artifacts_dir / f"checkout_before_{timestamp}.png"
+        after_path = self.artifacts_dir / f"checkout_pre_payment_{timestamp}.png"
+
+        try:
             try:
+                await page.bring_to_front()
+            except Exception:
+                pass
+
+            if deeplink and not is_results_deeplink:
                 await page.goto(deeplink, wait_until="domcontentloaded", timeout=45000)
+            elif results_page_url and page.url != results_page_url:
+                await page.goto(results_page_url, wait_until="domcontentloaded", timeout=45000)
 
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                before_path = self.artifacts_dir / f"checkout_before_{timestamp}.png"
-                await page.screenshot(path=str(before_path), full_page=True)
+            await page.screenshot(path=str(before_path), full_page=True)
 
-                provider = str(offer.get("provider") or "")
-                if self._is_trip_provider(provider, deeplink):
-                    if is_results_deeplink:
-                        await self._trip_select_offer_on_results(page, offer)
-                    await self._trip_checkout_flow(page, traveler, skip_fill=skip_fill)
-                else:
-                    await self._handle_cookie_banner(page)
-                    await self._progress_to_checkout_step(page)
-                    if not skip_fill:
-                        await self._fill_traveler_form(page, traveler)
-
-                # Save state right before potential payment step.
-                after_path = self.artifacts_dir / f"checkout_pre_payment_{timestamp}.png"
-                await page.screenshot(path=str(after_path), full_page=True)
-
+            provider = str(offer.get("provider") or "")
+            if self._is_trip_provider(provider, deeplink or results_page_url):
                 if self._is_results_page(page.url):
-                    return {
-                        "status": "failed",
-                        "reason": "Still on search results page; checkout form not reached.",
-                        "confirmation_url": page.url,
-                        "screenshot": str(after_path),
-                        "artifacts": [str(before_path), str(after_path)],
-                    }
+                    await self._trip_select_offer_on_results(page, offer)
+                await self._trip_checkout_flow(page, traveler, skip_fill=skip_fill)
+            else:
+                await self._handle_cookie_banner(page)
+                await self._progress_to_checkout_step(page)
+                if not skip_fill:
+                    await self._fill_traveler_form(page, traveler)
 
-                result_status = "needs_user_payment"
-                result_reason = "Reached pre-payment stage. Final payment is intentionally not clicked."
-                if skip_fill:
-                    result_status = "needs_user_input"
-                    result_reason = "Reached traveler info page. Please fill manually in the browser."
+            await page.screenshot(path=str(after_path), full_page=True)
 
-                result = {
-                    "status": result_status,
-                    "reason": result_reason,
+            if self._is_results_page(page.url):
+                return {
+                    "status": "failed",
+                    "reason": "Still on search results page; checkout form not reached.",
                     "confirmation_url": page.url,
                     "screenshot": str(after_path),
                     "artifacts": [str(before_path), str(after_path)],
                 }
-                if not headless:
-                    if skip_fill:
-                        result["reason"] = (
-                            "Reached traveler info page. Browser left open for user input."
-                        )
-                    else:
-                        result["reason"] = (
-                            "Reached pre-payment stage. Browser left open for user review. "
-                            "Final payment is intentionally not clicked."
-                        )
-                return result
-            finally:
-                if headless:
-                    await browser.close()
+
+            result_status = "needs_user_payment"
+            result_reason = "Reached pre-payment stage. Final payment is intentionally not clicked."
+            if skip_fill:
+                result_status = "needs_user_input"
+                result_reason = "Reached traveler info page. Please fill manually in the browser."
+
+            result = {
+                "status": result_status,
+                "reason": result_reason,
+                "confirmation_url": page.url,
+                "screenshot": str(after_path),
+                "artifacts": [str(before_path), str(after_path)],
+            }
+            if using_live_browser or not headless:
+                result["handoff_channel"] = "live_browser"
+                if skip_fill:
+                    result["reason"] = "Reached traveler info page in the live browser window. Continue there."
+                else:
+                    result["reason"] = (
+                        "Reached pre-payment stage in the live browser window. "
+                        "Review and finish there. Final payment is intentionally not clicked."
+                    )
+            return result
+        finally:
+            if browser is not None and headless:
+                await browser.close()
 
     def _is_trip_provider(self, provider: str, deeplink: str) -> bool:
         haystack = f"{provider} {deeplink}".lower()

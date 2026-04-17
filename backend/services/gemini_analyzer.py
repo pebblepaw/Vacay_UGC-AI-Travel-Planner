@@ -49,11 +49,13 @@ Analyze this video and extract travel-related information. Focus on:
 
 3. **Vibes**: What's the mood/vibe? (cozy, energetic, hidden gem, trendy, authentic, etc.)
 
-4. **City/Region**: What city or region is this video about?
+4. **Place scope**: What city, region, and country is this video about?
 
 Return your analysis as JSON with this structure:
 {
   "city": "City Name",
+  "country": "Country Name",
+  "scope_type": "city|region|country",
   "locations": [
     {
       "name": "Location Name",
@@ -67,10 +69,11 @@ Return your analysis as JSON with this structure:
   ],
   "activities": ["activity1", "activity2"],
   "vibes": ["vibe1", "vibe2"],
-  "confidence": "high|medium|low"
+  "confidence": "high|medium|low",
+  "scope_confidence": "high|medium|low"
 }
 
-If the video is not travel-related, return: {"city": null, "locations": [], "activities": [], "vibes": [], "confidence": "low"}
+If the video is not travel-related, return: {"city": null, "country": null, "scope_type": "city", "locations": [], "activities": [], "vibes": [], "confidence": "low", "scope_confidence": "low"}
 """
 
     @staticmethod
@@ -167,7 +170,10 @@ If the video is not travel-related, return: {"city": null, "locations": [], "act
                 vibes=data.get("vibes", []),
                 metadata={
                     "city": data.get("city"),
+                    "country": data.get("country"),
+                    "scope_type": data.get("scope_type", "city"),
                     "confidence": data.get("confidence", "low"),
+                    "scope_confidence": data.get("scope_confidence", data.get("confidence", "low")),
                     "video_title": video_title,
                 },
             )

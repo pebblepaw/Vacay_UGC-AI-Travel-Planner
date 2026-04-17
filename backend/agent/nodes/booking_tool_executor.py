@@ -41,6 +41,7 @@ async def booking_tool_executor(state: AgentState) -> dict:
                 requested_destination = args.get("destination")
                 requested_departure = args.get("departure_date")
                 requested_return = args.get("return_date", "")
+                requested_trip_type = args.get("trip_type", "")
                 requested_provider = args.get("provider_hint", "trip.com")
                 if (
                     booking_offers
@@ -48,6 +49,7 @@ async def booking_tool_executor(state: AgentState) -> dict:
                     and booking_context.get("destination") == requested_destination
                     and booking_context.get("departure_date") == requested_departure
                     and booking_context.get("return_date", "") == requested_return
+                    and booking_context.get("trip_type", "") == requested_trip_type
                     and booking_context.get("provider_hint") == requested_provider
                 ):
                     message = "Using cached booking offers."
@@ -62,8 +64,14 @@ async def booking_tool_executor(state: AgentState) -> dict:
                     origin=requested_origin,
                     destination=requested_destination,
                     departure_date=requested_departure,
+                    origin_code=str(args.get("origin_code", "")),
+                    origin_city_code=str(args.get("origin_city_code", "")),
+                    destination_code=str(args.get("destination_code", "")),
+                    destination_city_code=str(args.get("destination_city_code", "")),
                     return_date=requested_return,
-                    adults=int(args.get("adults", 1)),
+                    adults=int(args["adults"]),
+                    trip_type=str(args.get("trip_type", "")),
+                    cabin=str(args.get("cabin", "")),
                     budget_limit=float(args.get("budget_limit", 0.0)),
                     provider_hint=requested_provider,
                     max_results=int(args.get("max_results", 5)),
@@ -75,6 +83,7 @@ async def booking_tool_executor(state: AgentState) -> dict:
                     "destination": query.destination,
                     "departure_date": query.departure_date,
                     "return_date": query.return_date,
+                    "trip_type": query.trip_type,
                     "adults": query.adults,
                     "provider_hint": query.provider_hint,
                 }

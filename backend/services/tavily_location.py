@@ -17,7 +17,13 @@ logger = logging.getLogger(__name__)
 class TavilyLocationService:
     """Service for geocoding and enriching location data using Tavily."""
 
+    _LOCATION_TIMEOUT_SECONDS = 20.0
+    _MAX_TAVILY_CANDIDATES = 5
+    _MAX_CANDIDATE_LENGTH = 120
     _COUNTRY_HINTS = {
+        # China
+        "china": "cn", "shanghai": "cn", "beijing": "cn", "chengdu": "cn",
+        "guangzhou": "cn", "shenzhen": "cn", "hangzhou": "cn", "xian": "cn",
         # France
         "france": "fr", "french": "fr", "paris": "fr", "nice": "fr",
         "provence": "fr", "riviera": "fr", "côte": "fr", "cote": "fr",
@@ -78,6 +84,30 @@ class TavilyLocationService:
         "lane", "ln", "drive", "dr", "way", "place", "pl", "terrace", "ter",
         "track", "loop", "highway", "hwy",
     )
+    _CITY_ALIASES = {
+        "china": ("china", "中国", "中华人民共和国"),
+        "shanghai": ("shanghai", "上海", "上海市"),
+        "beijing": ("beijing", "北京", "北京市"),
+        "guangzhou": ("guangzhou", "广州", "广州市"),
+        "shenzhen": ("shenzhen", "深圳", "深圳市"),
+        "chengdu": ("chengdu", "成都", "成都市"),
+        "hangzhou": ("hangzhou", "杭州", "杭州市"),
+        "xian": ("xian", "xi'an", "西安", "西安市"),
+    }
+    _NOISE_MARKERS = (
+        "opening hour",
+        "review",
+        "travel guide",
+        "recommended",
+        "source:",
+        "tips:",
+        "book now",
+        "reservation",
+        "phone:",
+        "website:",
+        "hours:",
+        "menu:",
+    )
     
     def __init__(self):
         self.api_key = settings.TAVLY_API
@@ -89,7 +119,8 @@ class TavilyLocationService:
     async def geocode_location(
         self,
         place_name: str,
-        city: Optional[str] = None
+        city: Optional[str] = None,
+        scope: Optional[dict] = None,
     ) -> Optional[dict]:
         """
         Get coordinates and details for a place.
@@ -107,45 +138,57 @@ class TavilyLocationService:
             or None if not found
         """
         try:
-            # Nominatim is the most reliable geocoder for place names.
-            # We try multiple query strategies in order of specificity.
-
-            # Strategy 1: structured query with country-code hint (most precise)
-            if city:
-                result = await self._geocode_with_nominatim_structured(place_name, city)
-                if result:
-                    return result
-
-            # Strategy 2: free-form "place_name, city"
-            result = await self._geocode_with_nominatim(place_name, city)
-            if result:
-                return result
-
-            # Strategy 3: place_name only (drops overly broad city like "South of France")
-            if city:
-                logger.info(f"Nominatim retry without city for: {place_name}")
-                result = await self._geocode_with_nominatim(place_name, None)
-                if result:
-                    return result
-
-            # Strategy 4: use Tavily search to discover a concrete address,
-            # then geocode that address with Mapbox and Nominatim.
-            address_candidates = await self._discover_location_candidates_with_tavily(place_name, city)
-            for candidate in address_candidates:
-                result = await self._geocode_with_mapbox(candidate, city)
-                if result:
-                    return result
-
-                result = await self._geocode_with_nominatim(candidate, None)
-                if result:
-                    return result
-
-            logger.warning(f"All geocoding strategies failed for: {place_name}")
+            async with asyncio.timeout(self._LOCATION_TIMEOUT_SECONDS):
+                return await self._geocode_location_with_strategies(place_name, city, scope)
+        except TimeoutError:
+            logger.warning(
+                "Geocoding timed out for %s after %.1f seconds",
+                place_name,
+                self._LOCATION_TIMEOUT_SECONDS,
+            )
             return None
-            
         except Exception as e:
             logger.error(f"Error geocoding {place_name}: {e}")
             return None
+
+    async def _geocode_location_with_strategies(
+        self,
+        place_name: str,
+        city: Optional[str] = None,
+        scope: Optional[dict] = None,
+    ) -> Optional[dict]:
+        query_hint = self._scope_query_hint(city, scope)
+
+        if query_hint:
+            result = await self._geocode_with_nominatim_structured(place_name, query_hint)
+            if self._accept_result(result, scope):
+                return result
+
+        result = await self._geocode_with_nominatim(place_name, query_hint)
+        if self._accept_result(result, scope):
+            return result
+
+        if query_hint:
+            logger.info(f"Nominatim retry without city for: {place_name}")
+            result = await self._geocode_with_nominatim(place_name, None)
+            if self._accept_result(result, scope):
+                return result
+
+        address_candidates = await self._discover_location_candidates_with_tavily(place_name, query_hint)
+        for candidate in address_candidates:
+            result = await self._geocode_with_mapbox(candidate, query_hint)
+            if self._accept_result(result, scope):
+                return result
+
+            if not self._should_try_nominatim_candidate(candidate):
+                continue
+
+            result = await self._geocode_with_nominatim(candidate, None)
+            if self._accept_result(result, scope):
+                return result
+
+        logger.warning(f"All geocoding strategies failed for: {place_name}")
+        return None
     
     async def _geocode_with_nominatim(
         self,
@@ -185,11 +228,24 @@ class TavilyLocationService:
                 
                 result = data[0]
                 
+                address = result.get("address", {}) or {}
+                locality = (
+                    address.get("city")
+                    or address.get("town")
+                    or address.get("village")
+                    or address.get("municipality")
+                    or address.get("county")
+                    or ""
+                )
                 return {
                     "coords": [float(result["lon"]), float(result["lat"])],
                     "full_name": result.get("display_name", place_name),
                     "address": result.get("display_name", ""),
-                    "img": ""  # Nominatim doesn't provide images
+                    "img": "",  # Nominatim doesn't provide images
+                    "country_code": str(address.get("country_code") or "").lower(),
+                    "country": address.get("country", ""),
+                    "region": address.get("state", "") or address.get("region", ""),
+                    "locality": locality,
                 }
                 
         except Exception as e:
@@ -238,11 +294,24 @@ class TavilyLocationService:
                     return None
 
                 result = data[0]
+                address = result.get("address", {}) or {}
+                locality = (
+                    address.get("city")
+                    or address.get("town")
+                    or address.get("village")
+                    or address.get("municipality")
+                    or address.get("county")
+                    or ""
+                )
                 return {
                     "coords": [float(result["lon"]), float(result["lat"])],
                     "full_name": result.get("display_name", place_name),
                     "address": result.get("display_name", ""),
                     "img": "",
+                    "country_code": str(address.get("country_code") or "").lower(),
+                    "country": address.get("country", ""),
+                    "region": address.get("state", "") or address.get("region", ""),
+                    "locality": locality,
                 }
 
         except Exception as e:
@@ -262,6 +331,9 @@ class TavilyLocationService:
 
     def _looks_like_address(self, candidate: str) -> bool:
         """Rough filter to avoid geocoding arbitrary prose as an address."""
+        if not candidate or self._is_candidate_noise(candidate):
+            return False
+
         lowered = candidate.lower()
         has_number = bool(re.search(r"\d", candidate))
         has_street_term = any(term in lowered for term in self._STREET_TERMS)
@@ -270,10 +342,93 @@ class TavilyLocationService:
 
     def _normalize_address_candidate(self, candidate: str, city: Optional[str]) -> str:
         """Clean and complete an address candidate before geocoding."""
-        cleaned = re.sub(r"\s+", " ", candidate).strip(" ,;:-")
+        cleaned = re.sub(r"\s+", " ", candidate).strip(" ,;:-\"'")
+        cleaned = re.sub(r"^(?:[-*•]+|\d+[.)]\s*)", "", cleaned)
+        cleaned = re.sub(
+            r"^(?:located at|address(?: is|:)?|find us at)\s+",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
         if city and city.lower() not in cleaned.lower():
             cleaned = f"{cleaned}, {city}"
         return cleaned
+
+    def _is_candidate_noise(self, candidate: str) -> bool:
+        lowered = candidate.lower()
+        if len(candidate) > self._MAX_CANDIDATE_LENGTH:
+            return True
+        if "http://" in lowered or "https://" in lowered:
+            return True
+        if "|" in candidate or "##" in candidate:
+            return True
+        if any(marker in lowered for marker in self._NOISE_MARKERS):
+            return True
+        if re.search(r"[°º]", candidate):
+            return True
+        if candidate.count(",") > 6:
+            return True
+        return False
+
+    def _should_try_nominatim_candidate(self, candidate: str) -> bool:
+        return self._looks_like_address(candidate) and len(candidate) <= self._MAX_CANDIDATE_LENGTH
+
+    def _scope_query_hint(self, city: Optional[str], scope: Optional[dict]) -> Optional[str]:
+        if scope and scope.get("query_hint"):
+            return str(scope["query_hint"])
+        return city
+
+    def _accept_result(self, result: Optional[dict], scope: Optional[dict]) -> bool:
+        if not result:
+            return False
+        if not scope:
+            return True
+        if self._result_within_scope(result, scope):
+            return True
+        logger.info(
+            "Rejected out-of-scope match for '%s' inside '%s'",
+            result.get("full_name") or result.get("address") or "unknown place",
+            scope.get("query_hint") or scope.get("scope_name") or "unknown scope",
+        )
+        return False
+
+    @staticmethod
+    def _normalize_scope_text(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
+
+    def _result_within_scope(self, result: dict, scope: dict) -> bool:
+        scope_name = self._normalize_scope_text(str(scope.get("scope_name") or ""))
+        scope_type = str(scope.get("scope_type") or "city")
+        scope_country = self._normalize_scope_text(str(scope.get("country") or ""))
+        scope_country_code = str(scope.get("country_code") or "").lower()
+        raw_combined = " ".join(
+            str(result.get(part) or "")
+            for part in ("locality", "region", "country", "address", "full_name")
+        )
+        combined = self._normalize_scope_text(raw_combined)
+        raw_lower = raw_combined.lower()
+        result_country_code = str(result.get("country_code") or "").lower()
+
+        if scope_country_code and result_country_code and result_country_code != scope_country_code:
+            return False
+
+        if scope_type == "country":
+            return bool(
+                (scope_country_code and result_country_code == scope_country_code)
+                or (scope_country and scope_country in combined)
+                or any(alias.lower() in raw_lower for alias in self._CITY_ALIASES.get(scope_country, ()))
+            )
+
+        if scope_name and scope_name in combined:
+            return True
+
+        if any(alias.lower() in raw_lower for alias in self._CITY_ALIASES.get(scope_name, ())):
+            return True
+
+        if scope_type == "region" and scope_country_code and result_country_code == scope_country_code:
+            return True
+
+        return False
 
     def _extract_address_candidates(self, text: str, city: Optional[str]) -> list[str]:
         """Extract likely address strings from Tavily answer/result text."""
@@ -323,10 +478,10 @@ class TavilyLocationService:
                     json={
                         "api_key": self.api_key,
                         "query": query,
-                        "search_depth": "advanced",
+                        "search_depth": "basic",
                         "include_answer": True,
                         "include_raw_content": False,
-                        "max_results": 5,
+                        "max_results": 3,
                     },
                 )
 
@@ -344,7 +499,7 @@ class TavilyLocationService:
                 candidates.extend(self._extract_address_candidates(result.get("title", ""), city))
                 candidates.extend(self._extract_address_candidates(result.get("content", ""), city))
 
-            unique_candidates = list(dict.fromkeys(candidates))
+            unique_candidates = list(dict.fromkeys(candidates))[: self._MAX_TAVILY_CANDIDATES]
             if unique_candidates:
                 logger.info("Recovered %s Tavily address candidate(s) for %s", len(unique_candidates), place_name)
             return unique_candidates
@@ -399,11 +554,31 @@ class TavilyLocationService:
             if not coords or len(coords) != 2:
                 return None
 
+            context = result.get("context", []) or []
+            locality = ""
+            region = ""
+            country = ""
+            country_code = ""
+            for item in context:
+                item_id = str(item.get("id") or "")
+                item_text = str(item.get("text") or "")
+                if item_id.startswith("place.") and not locality:
+                    locality = item_text
+                elif item_id.startswith("region.") and not region:
+                    region = item_text
+                elif item_id.startswith("country.") and not country:
+                    country = item_text
+                    country_code = str(item.get("short_code") or "").replace("country-", "").lower()
+
             return {
                 "coords": [float(coords[0]), float(coords[1])],
                 "full_name": result.get("place_name", query),
                 "address": result.get("place_name", query),
                 "img": "",
+                "country_code": country_code,
+                "country": country,
+                "region": region,
+                "locality": locality or result.get("text", ""),
             }
 
         except Exception as e:

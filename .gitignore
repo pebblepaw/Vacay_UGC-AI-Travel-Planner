@@ -42,6 +42,7 @@ downloads/
 *.swp
 *.swo
 .cursor/
+.codex/
 
 # OS
 .DS_Store
@@ -68,5 +69,4 @@ Demo/*
 !Demo/VACAY_DEMO_1.mp4
 *.md
 !README.md
-
 
