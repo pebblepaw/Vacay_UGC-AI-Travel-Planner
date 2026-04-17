@@ -2,6 +2,7 @@
 Configuration module for backend services.
 Loads environment variables and provides typed settings.
 """
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 from pathlib import Path
 from typing import Optional
@@ -30,7 +31,7 @@ class Settings(BaseSettings):
     SUPABASE_SECRET_KEY: str
 
     # Optional settings with defaults
-    DEBUG: bool = True
+    DEBUG: bool = Field(default=True, validation_alias=AliasChoices("VACAY_DEBUG", "DEBUG"))
     MAX_VIDEO_SIZE_MB: int = 500
     DOWNLOAD_TIMEOUT_SECONDS: int = 300
     
