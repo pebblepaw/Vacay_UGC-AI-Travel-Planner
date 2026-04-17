@@ -3,7 +3,6 @@ FastAPI routers for chat/AI agent interactions.
 Handles chat messages and agent responses (Phase 1: Mock responses).
 """
 import abc
-import re
 from fastapi import APIRouter, HTTPException
 from langchain_core.messages import HumanMessage, AIMessage
 from datetime import datetime
@@ -17,7 +16,6 @@ from backend.agent.graph import app
 
 # In-memory booking context cache (per trip) for follow-up selections.
 _BOOKING_SESSION: dict[str, dict] = {}
-_SEARCH_SESSION: dict[str, list[dict]] = {}
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +46,6 @@ async def send_chat_message(trip_id: str, request: ChatRequest):
             _BOOKING_SESSION.pop(trip_id, None)
 
         cached = _BOOKING_SESSION.get(trip_id) or {}
-        cached_search_results = _SEARCH_SESSION.get(trip_id) or []
 
         # Prepare input for LangGraph
         initial_state = {
@@ -59,15 +56,12 @@ async def send_chat_message(trip_id: str, request: ChatRequest):
             "current_step": 0,
             "critique": "",
             "iteration_count": 0,
-            "request_iteration_count": 0,
-            "current_user_request": request.message,
             "last_agent": None,
             "pending_changes": None,
             "booking_context": cached.get("booking_context"),
             "booking_offers": cached.get("booking_offers"),
             "selected_offer": cached.get("selected_offer"),
             "booking_result": cached.get("booking_result"),
-            "search_results": cached_search_results,
         }
 
         # .ainvoke = asynchronously invoke, i.e. runs until 
@@ -88,15 +82,6 @@ async def send_chat_message(trip_id: str, request: ChatRequest):
             "selected_offer": result.get("selected_offer"),
             "booking_result": result.get("booking_result"),
         }
-
-        if result.get("search_results") is not None:
-            search_results = result.get("search_results") or []
-            if search_results:
-                _SEARCH_SESSION[trip_id] = search_results
-            else:
-                _SEARCH_SESSION.pop(trip_id, None)
-        elif cached_search_results and _looks_like_search_selection(request.message, cached_search_results):
-            _SEARCH_SESSION.pop(trip_id, None)
 
         # Find the last AI message (the response to show the user)
         final_content = "I'm not sure how to help with that."
@@ -170,18 +155,6 @@ def _should_reset_booking(message: str) -> bool:
         "清空订单",
     ]
     return any(k in lowered for k in keywords)
-
-
-def _looks_like_search_selection(message: str, search_results: list[dict]) -> bool:
-    lowered = (message or "").strip().lower()
-    if not lowered or not search_results:
-        return False
-    if re.fullmatch(r"(?:add\s+)?(?:option\s*)?(?:no\.?\s*)?(\d+)", lowered):
-        return True
-    match = re.search(r"\b(?:option|no\.?|number)\s*(\d+)\b", lowered)
-    if match:
-        return True
-    return any(str(item.get("name") or "").strip().lower() in lowered for item in search_results if item.get("name"))
 
 
 # def _generate_mock_response(user_message: str, trip) -> str:
