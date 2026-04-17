@@ -100,21 +100,23 @@ def critic_node(state: AgentState) -> dict:
     trip = state.get("trip")
     messages = state["messages"]
     iteration_count = state.get("iteration_count", 0)
+    request_iteration_count = state.get("request_iteration_count", 0)
 
     # ── Safety: auto-approve after 3 iterations to prevent infinite loops ──
-    if iteration_count >= 3:
+    if iteration_count >= 3 or request_iteration_count >= 3:
         return {
             "next_node": "approve",
             "critique": "",
             "iteration_count": iteration_count,
+            "request_iteration_count": request_iteration_count,
         }
 
     trip_context = _format_trip_with_ids(trip)
     recent_actions = _extract_recent_actions(messages)
 
     # Find the original user request (first HumanMessage)
-    user_request = ""
-    for msg in messages:
+    user_request = state.get("current_user_request") or ""
+    for msg in reversed(messages):
         if hasattr(msg, "type") and msg.type == "human":
             user_request = msg.content
             break
@@ -148,6 +150,7 @@ def critic_node(state: AgentState) -> dict:
             "next_node": decision,  # Used by critic_router in graph.py
             "critique": critique_text,
             "iteration_count": iteration_count + 1,
+            "request_iteration_count": request_iteration_count + 1,
         }
 
     except Exception as e:
@@ -156,4 +159,5 @@ def critic_node(state: AgentState) -> dict:
             "next_node": "approve",
             "critique": "",
             "iteration_count": iteration_count,
+            "request_iteration_count": request_iteration_count,
         }

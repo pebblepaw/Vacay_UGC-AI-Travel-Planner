@@ -31,6 +31,13 @@ class AgentState(TypedDict):
     # Max 3 -> then critic auto-approves (to prevent infinite loop)
     iteration_count: int 
 
+    # Request-level critic loop counter
+    # Max 3 across the whole user request, even if the plan has multiple steps
+    request_iteration_count: int
+
+    # Current user request for critic validation
+    current_user_request: Optional[str]
+
     # agent tracking (so critic knows who to route back to)
     last_agent: Optional[str]
 
@@ -54,6 +61,9 @@ class AgentState(TypedDict):
 
     # result returned by checkout runner (pre-payment)
     booking_result: Optional[dict]
+
+    # most recent search results, cached for follow-up selections
+    search_results: Optional[List[dict]]
 
     # UI interrupt payload (optional)
     chat_interrupt: Optional[dict]

@@ -23,6 +23,49 @@ from langchain_core.output_parsers import JsonOutputParser
 from backend.agent.state import AgentState
 from backend.llm import get_agent_llm
 
+
+def _looks_like_search_selection(message: str) -> int | None:
+    lowered = (message or "").strip().lower()
+    if not lowered:
+        return None
+    exact = re.fullmatch(r"(?:add\s+)?(?:option\s*)?(?:no\.?\s*)?(\d+)", lowered)
+    if exact:
+        return int(exact.group(1))
+    match = re.search(r"\b(?:option|no\.?|number)\s*(\d+)\b", lowered)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _pick_search_result(message: str, search_results: list[dict]) -> dict | None:
+    index = _looks_like_search_selection(message)
+    if index and 1 <= index <= len(search_results):
+        return search_results[index - 1]
+
+    lowered = (message or "").strip().lower()
+    for item in search_results:
+        name = str(item.get("name") or "").strip()
+        if name and name.lower() in lowered:
+            return item
+    return None
+
+
+def _selection_instruction(result: dict) -> str:
+    name = str(result.get("name") or "Selected place").replace("'", "\\'")
+    description = str(result.get("description") or "Recommended from search results.").replace("'", "\\'")
+    coords = result.get("coords") or [0.0, 0.0]
+    longitude = coords[0] if isinstance(coords, (list, tuple)) and len(coords) > 0 and coords[0] is not None else 0.0
+    latitude = coords[1] if isinstance(coords, (list, tuple)) and len(coords) > 1 and coords[1] is not None else 0.0
+    day_number = int(result.get("day_number") or 1)
+    category = str(result.get("category") or "Food")
+    time_slot = str(result.get("time_slot") or "12:00 - 13:30")
+
+    return (
+        f"Add a new POI named '{name}' with category '{category}' to Day {day_number} "
+        f"at time '{time_slot}'. Coordinates: longitude={longitude}, latitude={latitude}. "
+        f"Vibe: {description}. Use add_poi tool. Do NOT ask the user any questions."
+    )
+
 orchestrator_prompt = ChatPromptTemplate.from_template("""
                                                         
     You are the Orchestrator for a travel itinerary editor. You manage a team of specialist agents:
@@ -127,6 +170,7 @@ def orchestrator_node(state: AgentState) -> dict:
     critique = state.get("critique", "")
     plan = state.get("plan")
     current_step = state.get("current_step", 0) 
+    cached_search_results = state.get("search_results") or []
 
     # ── If we're mid-plan and advancing to the next step ──
     if plan and current_step > 0 and current_step < len(plan):
@@ -152,6 +196,17 @@ def orchestrator_node(state: AgentState) -> dict:
     # ── New request or first step: short-circuit booking queries ──
     last_msg = messages[-1].content
     lowered_msg = last_msg.lower()
+    selected_search_result = _pick_search_result(last_msg, cached_search_results)
+    if selected_search_result:
+        instruction = _selection_instruction(selected_search_result)
+        return {
+            "next_node": "travel_editor",
+            "plan": [instruction],
+            "current_step": 0,
+            "critique": "",
+            "iteration_count": 0,
+        }
+
     booking_keywords = [
         "book",
         "booking",
@@ -216,12 +271,22 @@ def orchestrator_node(state: AgentState) -> dict:
         })
 
         _log.info(f">>> ORCHESTRATOR plan={result.get('plan')}, next={result['next_node']}")
+        plan_result = result.get("plan", [last_msg])
+        if result["next_node"] == "search_agent" and plan_result:
+            first_step = plan_result[0]
+            later_steps = plan_result[1:]
+            if any(
+                any(token in str(step).lower() for token in ["selected", "selection", "choose", "chosen"])
+                for step in later_steps
+            ):
+                plan_result = [first_step]
         return {
             "next_node": result["next_node"],
-            "plan": result.get("plan", [last_msg]),
+            "plan": plan_result,
             "current_step": 0,
             "critique": "",  # Clear old critique
             "iteration_count": 0,  # Reset iteration count for new plan
+            "request_iteration_count": 0,
         }
 
     except Exception as e:
@@ -232,4 +297,3 @@ def orchestrator_node(state: AgentState) -> dict:
             "current_step": 0,
             "critique": "",
         }
-
