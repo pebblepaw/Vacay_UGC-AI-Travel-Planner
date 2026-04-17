@@ -9,9 +9,10 @@ from typing import Optional
 # Get project root (parent of backend/)
 PROJECT_ROOT = Path(__file__).parent.parent
 
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
-    
+
     # API Keys
     GEMINI_API_KEY: str
     DASHSCOPE_API_KEY: Optional[str] = None
@@ -21,7 +22,7 @@ class Settings(BaseSettings):
     DASHSCOPE_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     APP_CONFIG_PATH: Path = PROJECT_ROOT / "config" / "config.yaml"
     BOOKING_STRICT_REAL_TRIP: bool = True
-    
+
     # Supabase
     SUPABASE_PROJECT_URL: str
     SUPABASE_SECRET_KEY: str
@@ -30,12 +31,12 @@ class Settings(BaseSettings):
     DEBUG: str = "true"
     MAX_VIDEO_SIZE_MB: int = 500
     DOWNLOAD_TIMEOUT_SECONDS: int = 300
-    
+
     # Paths
     DOWNLOADS_DIR: Path = PROJECT_ROOT / "downloads"
     DATA_DIR: Path = PROJECT_ROOT / "backend" / "data"
     TRIPS_DIR: Path = PROJECT_ROOT / "backend" / "data" / "trips"
-    
+
     class Config:
         # Load from .env in project root (parent directory)
         env_file = str(PROJECT_ROOT / ".env")
