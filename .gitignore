@@ -69,4 +69,7 @@ Demo/*
 !Demo/VACAY_DEMO_1.mp4
 *.md
 !README.md
-
+!AGENTS.md
+!23_Apr_Report.md
+!docs/research/
+!docs/research/donor_code_log.md
