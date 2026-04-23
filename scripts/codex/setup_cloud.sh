@@ -24,7 +24,9 @@ python -m pip install --upgrade pip setuptools wheel
 python -m pip install -r backend/requirements.txt
 
 # Chromium is enough for the current Playwright-based booking flow.
-python -m playwright install chromium
+if ! python -m playwright install --with-deps chromium; then
+  python -m playwright install chromium
+fi
 
 pushd frontend >/dev/null
 if [[ -f package-lock.json ]]; then
