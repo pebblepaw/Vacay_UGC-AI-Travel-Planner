@@ -43,6 +43,13 @@ downloads/
 *.swo
 .cursor/
 .codex/
+!.codex/
+.codex/*
+!.codex/skills/
+!.codex/skills/**
+!.codex/superpowers/
+!.codex/superpowers/skills/
+!.codex/superpowers/skills/**
 
 # OS
 .DS_Store
@@ -62,6 +69,11 @@ temp/
 
 # Documentation
 docs/
+!docs/
+!docs/**
+docs/project_proposal/credentials.json
+docs/project_proposal/token.json
+docs/project_proposal/__pycache__/
 BRD.md
 PROGRESS.md
 QUICKSTART.md
@@ -69,7 +81,9 @@ Demo/*
 !Demo/VACAY_DEMO_1.mp4
 *.md
 !README.md
+!BRD.md
+!PROGRESS.md
 !AGENTS.md
 !23_Apr_Report.md
-!docs/research/
-!docs/research/donor_code_log.md
+!docs/**/*.md
+!.codex/**/*.md

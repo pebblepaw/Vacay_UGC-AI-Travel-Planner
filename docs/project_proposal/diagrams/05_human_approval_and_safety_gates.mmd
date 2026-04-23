@@ -1,0 +1,25 @@
+flowchart TD
+    A[Proposed Agent Action] --> B{Action Type}
+
+    B -->|read-only| C[Auto-Allow]
+    B -->|reversible edit| D[Soft Confirm]
+    B -->|destructive or financial| E[Mandatory Confirm]
+
+    C --> F[Execute]
+
+    D --> G{Risk Score}
+    G -->|low| F
+    G -->|medium/high| E
+
+    E --> H[Approval Payload\nwhat changes, cost impact, rollback]
+    H --> U[User Decision]
+
+    U -->|approve| I[Execute with Audit Trail]
+    U -->|reject| J[Return to Orchestrator\nrevise plan]
+
+    I --> K[Post-Execution Validation\nconsistency + policy checks]
+    K --> L[Persist State + Summarize]
+
+    F --> K
+    J --> M((End without action))
+    L --> N((End))

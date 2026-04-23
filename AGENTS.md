@@ -7,6 +7,7 @@ Start every substantial task by reading:
 1. [23_Apr_Report.md](23_Apr_Report.md)
 2. [BRD.md](BRD.md)
 3. [docs/agent_handoff.md](docs/agent_handoff.md)
+4. [PROGRESS.md](PROGRESS.md)
 
 ## What This Repo Is Building
 
@@ -30,6 +31,41 @@ Keep the travel-specific planner logic. Replace the runtime around it: Telegram 
 - Stop before payment.
 - Design for desktop demo use. Do not spend time optimizing mobile first.
 
+## Repo-Vendored Skills
+
+This branch vendors local skill content into:
+
+- `.codex/skills/`
+- `.codex/superpowers/`
+
+Use them as repo-local reference material in cloud tasks. Read only the skills that match the task.
+
+Read these first when they apply:
+
+- Documentation, plans, implementation notes:
+  - `.codex/skills/the-hemingway-rule/SKILL.md`
+- General code changes, refactors, prompt or schema work:
+  - `.codex/skills/coding-practices/SKILL.md`
+- Frontend work:
+  - `.codex/skills/frontend-skills/frontend-design/SKILL.md`
+  - `.codex/skills/frontend-skills/adapt/SKILL.md`
+  - `.codex/skills/frontend-skills/polish/SKILL.md`
+  - `.codex/skills/frontend-skills/harden/SKILL.md`
+  - `.codex/skills/frontend-skills/optimize/SKILL.md`
+- Browser testing and web automation:
+  - `.codex/skills/playwright-cli/SKILL.md`
+- Multi-agent execution:
+  - `.codex/superpowers/skills/subagent-driven-development/SKILL.md`
+  - `.codex/superpowers/skills/dispatching-parallel-agents/SKILL.md`
+- Test-first implementation:
+  - `.codex/superpowers/skills/test-driven-development/SKILL.md`
+- Debugging:
+  - `.codex/superpowers/skills/systematic-debugging/SKILL.md`
+- Final verification before claiming success:
+  - `.codex/superpowers/skills/verification-before-completion/SKILL.md`
+
+Do not read the whole vendored skill tree by default. Pull in only the files that match the current task.
+
 ## Execution Rules
 
 - Do not push to `main`.
@@ -37,6 +73,8 @@ Keep the travel-specific planner logic. Replace the runtime around it: Telegram 
 - Keep commits small enough for the user to test incrementally.
 - Update the checklist in [23_Apr_Report.md](23_Apr_Report.md) as work lands.
 - If you copy code from external repos, update [docs/research/donor_code_log.md](docs/research/donor_code_log.md).
+- Keep `docs/` in the repo. It is part of the cloud context, not optional background material.
+- `docs/project_proposal/credentials.json` and `docs/project_proposal/token.json` are intentionally excluded from GitHub. Treat them as secrets.
 
 ## Coding Rules
 
