@@ -10,6 +10,7 @@ import logging
 
 from backend.config import settings
 from backend.routers import videos, trips, chat
+from backend.routers import workspaces, telegram
 from backend.storage.supabase_storage import supabase_storage
 
 # Configure logging
@@ -62,6 +63,8 @@ async def add_debug_headers(request: Request, call_next):
 app.include_router(videos.router)
 app.include_router(trips.router)
 app.include_router(chat.router)
+app.include_router(workspaces.router)
+app.include_router(telegram.router)
 
 
 @app.on_event("startup")

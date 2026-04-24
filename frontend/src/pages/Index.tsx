@@ -82,9 +82,15 @@ const TripContent = () => {
 const Index = () => {
   const [searchParams] = useSearchParams();
   const tripId = searchParams.get('trip');
+  const workspaceId = searchParams.get('workspace');
+  const workspaceToken = searchParams.get('token');
 
   return (
-    <TripProvider tripId={tripId || undefined}>
+    <TripProvider
+      tripId={tripId || undefined}
+      workspaceId={workspaceId || undefined}
+      workspaceToken={workspaceToken || undefined}
+    >
       <TripContent />
     </TripProvider>
   );

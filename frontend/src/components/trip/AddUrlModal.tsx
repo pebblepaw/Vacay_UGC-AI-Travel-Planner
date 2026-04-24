@@ -1,89 +1,89 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  Dialog, 
-  DialogContent, 
-  DialogHeader, 
-  DialogTitle, 
-  DialogTrigger 
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { 
-  Plus, 
-  Link, 
-  Loader2,
-  Check,
-  Video,
-  AlertCircle
-} from 'lucide-react';
+import { Plus, Link, Loader2, Check, Video } from 'lucide-react';
 import { processVideos } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
+import { useTripContext } from '@/contexts/TripContext';
 
 const platformPatterns = [
-  { name: 'TikTok', pattern: /tiktok\.com/, icon: '📱', color: 'bg-foreground' },
-  { name: 'Douyin', pattern: /douyin\.com/, icon: '🎵', color: 'bg-foreground' },
-  { name: 'YouTube', pattern: /youtube\.com|youtu\.be/, icon: '▶️', color: 'bg-destructive' },
-  { name: 'Rednote', pattern: /xiaohongshu\.com/, icon: '📕', color: 'bg-destructive' },
+  { name: 'TikTok', pattern: /tiktok\.com/i, icon: '📱' },
+  { name: 'Douyin', pattern: /douyin\.com/i, icon: '🎵' },
+  { name: 'YouTube', pattern: /youtube\.com|youtu\.be/i, icon: '▶️' },
+  { name: 'Rednote', pattern: /xiaohongshu\.com|rednote/i, icon: '📕' },
+  { name: 'Instagram', pattern: /instagram\.com/i, icon: '📷' },
 ];
+
+export const parseUrlsInput = (value: string): string[] => {
+  const segments = value
+    .split(/[\s,\n\r\t]+/g)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const unique = Array.from(new Set(segments));
+  return unique.filter((item) => /^https?:\/\//i.test(item));
+};
 
 export const AddUrlModal = () => {
   const [open, setOpen] = useState(false);
-  const [url, setUrl] = useState('');
+  const [rawInput, setRawInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [detectedPlatform, setDetectedPlatform] = useState<typeof platformPatterns[0] | null>(null);
+  const { workspaceId, ingestWorkspaceUrls, refreshWorkspaceSnapshot } = useTripContext();
   const { toast } = useToast();
 
-  const handleUrlChange = (value: string) => {
-    setUrl(value);
-    setError(null);
-    
-    // Detect platform
-    const platform = platformPatterns.find(p => p.pattern.test(value));
-    setDetectedPlatform(platform || null);
-  };
+  const parsedUrls = useMemo(() => parseUrlsInput(rawInput), [rawInput]);
+  const detectedPlatforms = useMemo(() => {
+    const names = new Set<string>();
+    parsedUrls.forEach((url) => {
+      platformPatterns.forEach((platform) => {
+        if (platform.pattern.test(url)) names.add(platform.name);
+      });
+    });
+    return platformPatterns.filter((platform) => names.has(platform.name));
+  }, [parsedUrls]);
 
   const handleSubmit = async () => {
-    if (!url.trim()) return;
+    if (parsedUrls.length === 0) return;
 
     setIsProcessing(true);
     setError(null);
-    
+
     try {
-      // Call backend API
-      const response = await processVideos([url]);
-      
+      if (workspaceId) {
+        const result = await ingestWorkspaceUrls(parsedUrls);
+        await refreshWorkspaceSnapshot();
+        toast({
+          title: 'Workspace updated',
+          description: `Imported ${result.imported} link(s)${result.failed ? `, ${result.failed} failed` : ''}.`,
+        });
+      } else {
+        const response = await processVideos(parsedUrls);
+        toast({ title: 'Success!', description: response.message });
+        window.location.href = `/?trip=${response.trip_id}`;
+      }
+
       setIsProcessing(false);
       setIsComplete(true);
-      
-      toast({
-        title: "Success!",
-        description: response.message,
-      });
-      
-      // Reset after showing success
       setTimeout(() => {
-        setUrl('');
+        setRawInput('');
         setIsComplete(false);
-        setDetectedPlatform(null);
         setOpen(false);
-        
-        // Redirect to home page with trip ID as query parameter
-        window.location.href = `/?trip=${response.trip_id}`;
-      }, 1500);
+      }, 900);
     } catch (err) {
       setIsProcessing(false);
-      const errorMessage = err instanceof Error ? err.message : 'Failed to process video';
+      const errorMessage = err instanceof Error ? err.message : 'Failed to process videos';
       setError(errorMessage);
-      
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: errorMessage,
-      });
+      toast({ variant: 'destructive', title: 'Error', description: errorMessage });
     }
   };
 
@@ -103,46 +103,47 @@ export const AddUrlModal = () => {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Video className="h-5 w-5 text-primary" />
-            Add Video to Trip
+            Add Video Links
           </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4 pt-4">
-          {/* Platform icons */}
-          <div className="flex items-center justify-center gap-4">
-            {platformPatterns.map((platform) => (
-              <motion.div
-                key={platform.name}
-                whileHover={{ scale: 1.1 }}
-                className={`w-12 h-12 rounded-xl flex items-center justify-center text-xl transition-all ${
-                  detectedPlatform?.name === platform.name
-                    ? 'bg-primary/10 ring-2 ring-primary'
-                    : 'bg-secondary'
-                }`}
-              >
-                {platform.icon}
-              </motion.div>
-            ))}
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {platformPatterns.map((platform) => {
+              const active = detectedPlatforms.some((p) => p.name === platform.name);
+              return (
+                <motion.div
+                  key={platform.name}
+                  whileHover={{ scale: 1.05 }}
+                  className={`px-3 py-2 rounded-xl text-sm transition-all ${active ? 'bg-primary/10 ring-2 ring-primary' : 'bg-secondary'}`}
+                >
+                  {platform.icon} {platform.name}
+                </motion.div>
+              );
+            })}
           </div>
 
-          {/* URL Input */}
           <div className="relative">
-            <Link className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Paste TikTok, Douyin, YouTube, or Rednote URL..."
-              value={url}
-              onChange={(e) => handleUrlChange(e.target.value)}
-              className="pl-10 rounded-xl"
+            <Link className="absolute left-3 top-4 h-4 w-4 text-muted-foreground" />
+            <Textarea
+              placeholder="Paste one or more links (newline, comma, or spaces)"
+              value={rawInput}
+              onChange={(e) => {
+                setRawInput(e.target.value);
+                setError(null);
+              }}
+              className="pl-10 min-h-28 rounded-xl"
               disabled={isProcessing}
             />
-            {detectedPlatform && !isProcessing && (
-              <Badge className="absolute right-2 top-1/2 -translate-y-1/2 text-xs">
-                {detectedPlatform.icon} {detectedPlatform.name}
-              </Badge>
-            )}
           </div>
 
-          {/* Processing state */}
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>{parsedUrls.length} link(s) detected</span>
+            {workspaceId ? <Badge variant="secondary">Workspace ingest</Badge> : <Badge variant="outline">Trip ingest</Badge>}
+          </div>
+
+          {error && <p className="text-sm text-destructive">{error}</p>}
+
           <AnimatePresence mode="wait">
             {isProcessing && (
               <motion.div
@@ -154,23 +155,9 @@ export const AddUrlModal = () => {
                 <div className="flex items-center gap-3">
                   <Loader2 className="h-5 w-5 animate-spin text-primary" />
                   <div className="flex-1">
-                    <p className="text-sm font-medium text-foreground">
-                      Extracting video content...
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Analyzing locations, vibes, and recommendations
-                    </p>
+                    <p className="text-sm font-medium text-foreground">Processing {parsedUrls.length} link(s)...</p>
+                    <p className="text-xs text-muted-foreground">Extracting locations and merging into the active workspace</p>
                   </div>
-                </div>
-                
-                {/* Progress bar */}
-                <div className="mt-3 h-1.5 bg-muted rounded-full overflow-hidden">
-                  <motion.div
-                    initial={{ width: '0%' }}
-                    animate={{ width: '100%' }}
-                    transition={{ duration: 2 }}
-                    className="h-full gradient-bg"
-                  />
                 </div>
               </motion.div>
             )}
@@ -181,36 +168,23 @@ export const AddUrlModal = () => {
                 animate={{ opacity: 1, scale: 1 }}
                 className="bg-category-nature/10 rounded-xl p-4 text-center"
               >
-                <motion.div
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  transition={{ type: 'spring', bounce: 0.5 }}
-                  className="w-12 h-12 bg-category-nature rounded-full flex items-center justify-center mx-auto mb-2"
-                >
+                <div className="w-12 h-12 bg-category-nature rounded-full flex items-center justify-center mx-auto mb-2">
                   <Check className="h-6 w-6 text-primary-foreground" />
-                </motion.div>
-                <p className="text-sm font-medium text-foreground">
-                  Video added to your trip!
-                </p>
+                </div>
+                <p className="text-sm font-medium text-foreground">Links imported successfully.</p>
               </motion.div>
             )}
           </AnimatePresence>
 
-          {/* Submit button */}
           {!isProcessing && !isComplete && (
-            <Button
-              onClick={handleSubmit}
-              disabled={!url.trim()}
-              className="w-full gradient-bg rounded-xl"
-            >
+            <Button onClick={handleSubmit} disabled={parsedUrls.length === 0} className="w-full gradient-bg rounded-xl">
               <Plus className="h-4 w-4 mr-2" />
-              Add to Trip
+              Add {parsedUrls.length > 1 ? `${parsedUrls.length} Links` : 'to Trip'}
             </Button>
           )}
 
-          {/* Helper text */}
           <p className="text-xs text-center text-muted-foreground">
-            Paste any travel video URL and we'll extract the locations automatically
+            In workspace mode, links merge into the shared trip and refresh in place.
           </p>
         </div>
       </DialogContent>

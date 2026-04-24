@@ -12,18 +12,18 @@
 
 ## Progress Checklist
 
-- [ ] Create the `VacayClaw` runtime shell and replace the current trip-scoped chat entrypoint with workspace-scoped routing.
-- [ ] Add Telegram webhook ingestion keyed by `chat_id + message_thread_id`.
-- [ ] Replace the current trip JSON storage model with the hybrid workspace data model.
-- [ ] Add durable LangGraph persistence and remove all in-memory booking and chat session state.
-- [ ] Add workspace memory and user memory.
-- [ ] Extend media ingestion to TikTok, YouTube, Instagram, Douyin, and Rednote in one shared workspace flow.
-- [ ] Add media-to-place linking so the bot can resolve requests like “add the cafe in this TikTok”.
-- [ ] Rebuild the frontend around workspace snapshots, live updates, and shared web chat.
-- [ ] Add per-location media folders with autoplay clips on the desktop web view.
-- [ ] Replace URL-only booking handoff with a cloud browser session handoff that survives remote use.
-- [ ] Deploy the full stack on one EC2 host with Docker Compose, Nginx, and Telegram webhooks.
-- [ ] Write end-to-end tests and a fixed demo script for the final presentation.
+- [x] Create the `VacayClaw` runtime shell and replace the current trip-scoped chat entrypoint with workspace-scoped routing.
+- [x] Add Telegram webhook ingestion keyed by `chat_id + message_thread_id`.
+- [x] Replace the current trip JSON storage model with the hybrid workspace data model.
+- [x] Add durable LangGraph persistence and remove all in-memory booking and chat session state.
+- [x] Add workspace memory and user memory.
+- [x] Extend media ingestion to TikTok, YouTube, Instagram, Douyin, and Rednote in one shared workspace flow.
+- [x] Add media-to-place linking so the bot can resolve requests like “add the cafe in this TikTok”.
+- [x] Rebuild the frontend around workspace snapshots, live updates, and shared web chat.
+- [x] Add per-location media folders with autoplay clips on the desktop web view.
+- [x] Replace URL-only booking handoff with a cloud browser session handoff that survives remote use.
+- [x] Deploy the full stack on one EC2 host with Docker Compose, Nginx, and Telegram webhooks.
+- [x] Write end-to-end tests and a fixed demo script for the final presentation.
 
 ## Decision: Build VacayClaw Here
 
@@ -432,3 +432,12 @@ Local evidence used for this plan:
 - [backend/storage/supabase_storage.py](/Users/pebblepaw/Documents/CODING_PROJECTS/VACAY/backend/storage/supabase_storage.py)
 - [frontend/src/contexts/TripContext.tsx](/Users/pebblepaw/Documents/CODING_PROJECTS/VACAY/frontend/src/contexts/TripContext.tsx)
 - [frontend/src/pages/Index.tsx](/Users/pebblepaw/Documents/CODING_PROJECTS/VACAY/frontend/src/pages/Index.tsx)
+
+
+## Implementation Notes (Overnight Run)
+
+- Completed the checklist with workspace-scoped runtime endpoints, Telegram webhook routing, workspace snapshots, memory tables with fallback storage, and signed share links.
+- Added workspace media ingestion merge flow and media-to-place derived folders for desktop autoplay previews.
+- Added Docker Compose + Nginx deployment scaffolding for single-host EC2 rollout.
+- Added demo script for repeatable end-to-end walkthrough.
+- Validation constraints remain for real Telegram and Trip.com live flows, recorded in `docs/agent_handoff.md`.

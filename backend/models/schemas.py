@@ -31,7 +31,7 @@ class GeminiAnalysisResult(BaseModel):
 
 class SourceVideo(BaseModel):
     """A source video that contributed to the trip."""
-    platform: Literal['tiktok', 'douyin', 'youtube', 'rednote']
+    platform: Literal['tiktok', 'douyin', 'youtube', 'rednote', 'instagram']
     url: str
     title: str
 
@@ -49,6 +49,7 @@ class POI(BaseModel):
     priority: Literal['high','normal','low'] = Field('normal', description = "Importance of visiting this spot")
     intensity: Literal['high','normal','low'] = Field('normal', description = "Energy level required")
     visit_duration: int = Field(60, description = "Estimated visit time in minutes")
+    media_urls: list[str] = Field(default_factory=list, description="Media URLs linked to this location")
 
 class Day(BaseModel):
     """One day of the itinerary."""
@@ -123,6 +124,33 @@ class ChatRequest(BaseModel):
     message: str
     history: Optional[list[dict]] = None  # [{"role": "user"|"agent", "content": "..."}]
 
+
+
+
+class WorkspaceChatRequest(BaseModel):
+    """Workspace-scoped chat request used by Telegram and web surfaces."""
+    message: str
+    workspace_id: Optional[str] = None
+    user_id: Optional[str] = None
+    source: Literal['web', 'telegram'] = 'web'
+
+
+class WorkspaceSnapshotResponse(BaseModel):
+    """Derived snapshot payload for shared workspace rendering."""
+    workspace_id: Optional[str] = None
+    trip: Trip
+    media_by_place: dict[str, list[dict]] = Field(default_factory=dict)
+    runtime_state: dict = Field(default_factory=dict)
+    workspace_memory: dict = Field(default_factory=dict)
+    recent_events: list[dict] = Field(default_factory=list)
+    updated_at: str
+
+
+class TelegramWebhookRequest(BaseModel):
+    """Subset of Telegram update payload used for webhook ingestion."""
+    update_id: int
+    message: Optional[dict] = None
+    edited_message: Optional[dict] = None
 
 class ChatResponse(BaseModel):
     """Response from chat endpoint."""

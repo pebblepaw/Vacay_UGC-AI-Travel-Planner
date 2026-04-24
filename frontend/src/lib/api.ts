@@ -18,10 +18,6 @@ export interface VideoProcessResponse {
   error?: string;
 }
 
-export interface ChatRequest {
-  message: string;
-}
-
 export interface ChatResponse {
   messages: Array<{
     id: string;
@@ -35,9 +31,16 @@ export interface ChatResponse {
   updated_trip?: any;
 }
 
-/**
- * Process video URLs to create a trip itinerary
- */
+export interface WorkspaceSnapshotResponse {
+  workspace_id: string;
+  trip: any;
+  media_by_place: Record<string, Array<{ title: string; url: string; platform: string; autoplay: boolean }>>;
+  runtime_state: Record<string, unknown>;
+  workspace_memory: Record<string, unknown>;
+  recent_events: Array<Record<string, unknown>>;
+  updated_at: string;
+}
+
 export async function processVideos(
   urls: string[],
   tripTitle?: string
@@ -58,9 +61,26 @@ export async function processVideos(
   return response.json();
 }
 
-/**
- * Get all trips
- */
+
+export async function processWorkspaceVideos(
+  workspaceId: string,
+  urls: string[],
+  tripTitle?: string,
+): Promise<{ workspace_id: string; trip_id: string; snapshot: WorkspaceSnapshotResponse; imported_count: number; failed_count: number }> {
+  const response = await fetch(`${API_BASE_URL}/api/workspaces/${workspaceId}/videos/process`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ urls, trip_title: tripTitle }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to process workspace videos');
+  }
+
+  return response.json();
+}
+
 export async function listTrips() {
   const response = await fetch(`${API_BASE_URL}/api/trips`);
 
@@ -71,9 +91,6 @@ export async function listTrips() {
   return response.json();
 }
 
-/**
- * Get a specific trip
- */
 export async function getTrip(tripId: string) {
   const response = await fetch(`${API_BASE_URL}/api/trips/${tripId}`);
 
@@ -84,9 +101,6 @@ export async function getTrip(tripId: string) {
   return response.json();
 }
 
-/**
- * Delete a trip
- */
 export async function deleteTrip(tripId: string) {
   const response = await fetch(`${API_BASE_URL}/api/trips/${tripId}`, {
     method: 'DELETE',
@@ -99,9 +113,6 @@ export async function deleteTrip(tripId: string) {
   return response.json();
 }
 
-/**
- * Send a chat message
- */
 export async function sendChatMessage(
   tripId: string,
   message: string,
@@ -123,9 +134,46 @@ export async function sendChatMessage(
   return response.json();
 }
 
-/**
- * Health check
- */
+export async function sendWorkspaceMessage(
+  workspaceId: string,
+  message: string,
+  userId?: string,
+): Promise<ChatResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/workspaces/${workspaceId}/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, workspace_id: workspaceId, user_id: userId, source: 'web' }),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to send workspace message');
+  }
+  return response.json();
+}
+
+export async function getWorkspaceSnapshot(
+  workspaceId: string,
+  token?: string,
+): Promise<WorkspaceSnapshotResponse> {
+  const qp = token ? `?token=${encodeURIComponent(token)}` : '';
+  const response = await fetch(`${API_BASE_URL}/api/workspaces/${workspaceId}/snapshot${qp}`);
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to fetch workspace snapshot');
+  }
+  return response.json();
+}
+
+export async function createWorkspaceShareLink(workspaceId: string) {
+  const response = await fetch(`${API_BASE_URL}/api/workspaces/${workspaceId}/share-link`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    throw new Error('Failed to create workspace share link');
+  }
+  return response.json();
+}
+
 export async function healthCheck() {
   const response = await fetch(`${API_BASE_URL}/api/health`);
   return response.json();

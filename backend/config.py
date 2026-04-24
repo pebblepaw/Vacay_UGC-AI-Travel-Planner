@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     DASHSCOPE_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     APP_CONFIG_PATH: Path = PROJECT_ROOT / "config" / "config.yaml"
     BOOKING_STRICT_REAL_TRIP: bool = True
+    SECRET_KEY: str = "vacayclaw-dev-secret"
 
     # Supabase
     SUPABASE_PROJECT_URL: str
@@ -31,6 +32,9 @@ class Settings(BaseSettings):
     DEBUG: str = "true"
     MAX_VIDEO_SIZE_MB: int = 500
     DOWNLOAD_TIMEOUT_SECONDS: int = 300
+    TELEGRAM_WEBHOOK_SECRET: Optional[str] = None
+    TELEGRAM_BOT_TOKEN: Optional[str] = None
+    PUBLIC_WEB_BASE_URL: str = "http://localhost:5173"
 
     # Paths
     DOWNLOADS_DIR: Path = PROJECT_ROOT / "downloads"
