@@ -1,0 +1,27 @@
+flowchart TD
+    U[User Message] --> O{Orchestrator\nintent + plan decomposition}
+
+    O -->|search intent| S[Search Agent]
+    O -->|itinerary edit intent| T[Travel Editor Agent]
+    O -->|small talk| C[ChitChat Agent]
+
+    S --> ST[Search Tool Node\nweb/place lookup]
+    ST --> S
+
+    T --> TE[Travel Tool Executor\nadd/delete/move/swap/replan/optimize]
+    TE --> T
+
+    S --> R[Critic Node\nreflection check]
+    T --> R
+
+    R -->|approve| F[Response Formatter]
+    R -->|revise| O
+    R -->|confirm required| H[Human Approval Gate]
+
+    H -->|approved| F
+    H -->|rejected| O
+
+    F -->|more steps pending| O
+    F -->|done| END((End))
+
+    C --> END

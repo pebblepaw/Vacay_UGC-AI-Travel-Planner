@@ -1,0 +1,39 @@
+flowchart LR
+    A[POST /api/trips/:id/chat] --> B[Load Trip State\nJSON store]
+    B --> C[Initialize AgentState]
+
+    subgraph STATE[AgentState]
+      M[messages]
+      T[trip]
+      P[plan]
+      CS[current_step]
+      L[last_agent]
+      I[iteration_count]
+      CR[critique]
+      PC[pending_changes]
+    end
+
+    C --> D[LangGraph Runtime]
+    D --> O[Orchestrator Node]
+    O --> SA[Search Agent]
+    O --> TA[Travel Editor Agent]
+    O --> CH[ChitChat]
+
+    SA --> ST[Search Tool Node]
+    ST --> SA
+
+    TA --> TX[Custom Travel Tool Executor]
+    TX --> TA
+
+    SA --> K[Critic]
+    TA --> K
+
+    K --> RF[Response Formatter]
+    K --> HR[Human Review]
+
+    RF --> E[Final Agent Message]
+    HR --> E
+    CH --> E
+
+    E --> S[Persist Updated Trip]
+    S --> Z[Chat API Response]
