@@ -57,3 +57,12 @@ class AgentState(TypedDict):
 
     # UI interrupt payload (optional)
     chat_interrupt: Optional[dict]
+
+    # workspace runtime context
+    workspace_id: Optional[str]
+
+    # shared memory for workspace (group-level)
+    workspace_memory: Optional[dict]
+
+    # user-specific memory in shared workspace
+    user_memory: Optional[dict]

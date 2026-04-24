@@ -1,17 +1,23 @@
 # VACAY - Documentation Index
 
-**Current Status**: Phase 8 work is on `main`. The app now includes config-driven model selection, `google.genai` video analysis, stricter location resolution, and a live Playwright-backed Trip.com flight handoff. One search/critic experiment was rolled back and is documented for future rework.
+**Current Status (April 23, 2026)**: VacayClaw workspace-runtime baseline is implemented on top of the existing VACAY planner stack.
 
-## Documentation (in `docs/`)
-Only read what you need. Start with the handoff guide.
+## Read Order for Active Work
 
-- **[Handoff Guide](docs/agent_handoff.md)** — Start here. Current state, risks, and the rolled-back work.
-- **[Overview](docs/brd/overview.md)** — Product flow and user-facing features.
-- **[Architecture](docs/brd/architecture.md)** — Tech stack, folder structure, and runtime shape.
-- **[Agent Architecture](docs/architecture/agent_architecture.md)** — LangGraph graph, nodes, tools, and booking flow.
+1. **[AGENTS.md](AGENTS.md)** — operating contract and required skills usage.
+2. **[23_Apr_Report.md](23_Apr_Report.md)** — implementation checklist and architecture decisions.
+3. **[docs/agent_handoff.md](docs/agent_handoff.md)** — real tested vs simulated coverage and handoff actions.
+4. **[PROGRESS.md](PROGRESS.md)** — phase summary and runtime baseline status.
+
+## Supporting Documentation (in `docs/`)
+
+- **[Overview](docs/brd/overview.md)** — product flow and user-facing features.
+- **[Architecture](docs/brd/architecture.md)** — prior architecture context.
+- **[Agent Architecture](docs/architecture/agent_architecture.md)** — LangGraph node-level internals.
 - **[Env Vars](docs/brd/env_vars.md)** — `.env` and `config/config.yaml` setup.
-- **[Test Data](docs/brd/test_data.md)** — Video URLs and manual test prompts.
-- **[Phase 8 Progress](docs/progress/phase8.md)** — Recent booking, config, and stabilization work. Includes the reverted search/critic sub-phase.
+- **[Test Data](docs/brd/test_data.md)** — video URLs and manual test prompts.
+- **[Progress Logs](docs/progress/)** — historical implementation records by phase.
 
-## Historical Docs
-- **[Project Proposal](docs/project_proposal/Project_Proposal.md)** — Historical proposal. Do not treat it as the current source of truth.
+## Note on Staleness
+
+Some historical phase documents predate the VacayClaw workspace-runtime revamp. When conflicts appear, follow `AGENTS.md` and `23_Apr_Report.md`.

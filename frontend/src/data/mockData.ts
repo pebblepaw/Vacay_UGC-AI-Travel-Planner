@@ -1,7 +1,7 @@
 // Mock data for VACAY - AI Travel Itinerary Planner
 
 export interface SourceVideo {
-  platform: 'tiktok' | 'douyin' | 'youtube' | 'rednote';
+  platform: 'tiktok' | 'douyin' | 'youtube' | 'rednote' | 'instagram';
   url: string;
   title: string;
 }
@@ -15,6 +15,7 @@ export interface POI {
   time_slot: string;
   vibe: string;
   travel_time?: string;
+  media_urls?: string[];
 }
 
 export interface Day {
@@ -286,6 +287,7 @@ export const getPlatformIcon = (platform: SourceVideo['platform']): string => {
     douyin: '🎵',
     youtube: '▶️',
     rednote: '📕',
+    instagram: '📷',
   };
   return icons[platform];
 };
