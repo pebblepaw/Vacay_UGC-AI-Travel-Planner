@@ -79,6 +79,10 @@ def _build_empty_workspace_trip(workspace_id: str) -> Trip:
     )
 
 
+def _new_graph_thread_id(workspace_id: str) -> str:
+    return f"{workspace_id}:turn_{uuid.uuid4().hex[:12]}"
+
+
 def _requests_workspace_restart(message: str) -> bool:
     return bool(WORKSPACE_RESET_RE.search(message or ""))
 
@@ -102,6 +106,10 @@ def _build_media_staging_trip(workspace_id: str, video_metadata: list[dict], tri
 
 def _is_placeholder_trip(trip: Trip | None) -> bool:
     return bool(trip and trip.trip_id == "placeholder-welcome")
+
+
+def _has_committed_itinerary(trip: Trip | None) -> bool:
+    return bool(trip and any(day.pois for day in trip.days))
 
 
 def _merge_source_videos(existing_trip: Trip, new_trip: Trip) -> None:
@@ -435,7 +443,19 @@ async def process_workspace_videos(workspace_id: str, request: VideoProcessReque
         new_trip = _build_media_staging_trip(workspace_id, video_metadata, request.trip_title)
     runtime_state = await workspace_runtime.load_runtime_state(workspace_id)
 
-    if existing_trip:
+    if existing_trip and not _has_committed_itinerary(existing_trip):
+        _merge_source_videos(new_trip, existing_trip)
+        new_trip.trip_id = existing_trip.trip_id
+        merged_trip = new_trip
+        pending_candidates = _filter_existing_trip_candidates(
+            merged_trip,
+            _build_pending_import_candidates(video_metadata, analysis_results, merged_trip),
+        )
+        runtime_state = {
+            **runtime_state,
+            "pending_import_candidates": pending_candidates,
+        }
+    elif existing_trip:
         _merge_source_videos(existing_trip, new_trip)
         pending_candidates = _filter_existing_trip_candidates(
             existing_trip,
@@ -611,7 +631,7 @@ async def _invoke_workspace_agent(workspace_id: str, message: str, user_id: str 
 
     result = await app.ainvoke(
         initial_state,
-        config={"recursion_limit": 50, "configurable": {"thread_id": workspace_id}},
+        config={"recursion_limit": 50, "configurable": {"thread_id": _new_graph_thread_id(workspace_id)}},
     )
     final_content = "I'm not sure how to help with that."
     for msg in reversed(result.get("messages", [])):

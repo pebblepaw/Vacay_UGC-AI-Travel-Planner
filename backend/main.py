@@ -78,14 +78,14 @@ async def startup_event():
     logger.info("VACAY workspace: %s", WORKSPACE_PATH)
     logger.info("VACAY config: %s", CONFIG_PATH)
     logger.info("Configuring LangGraph checkpoint storage...")
-    configure_graph_checkpointer()
+    await configure_graph_checkpointer()
     logger.info("Checking Supabase for existing trips...")
     await supabase_storage.seed_placeholder_if_empty()
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    close_graph_checkpointer()
+    await close_graph_checkpointer()
 
 
 @app.get("/")

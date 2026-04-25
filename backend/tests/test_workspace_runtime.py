@@ -468,9 +468,15 @@ def test_workspace_websocket_streams_initial_snapshot(monkeypatch: pytest.Monkey
     async def _no_seed():
         return None
 
+    async def _no_configure() -> bool:
+        return False
+
+    async def _no_close() -> None:
+        return None
+
     monkeypatch.setattr("backend.main.supabase_storage.seed_placeholder_if_empty", _no_seed)
-    monkeypatch.setattr("backend.main.configure_graph_checkpointer", lambda: False)
-    monkeypatch.setattr("backend.main.close_graph_checkpointer", lambda: None)
+    monkeypatch.setattr("backend.main.configure_graph_checkpointer", _no_configure)
+    monkeypatch.setattr("backend.main.close_graph_checkpointer", _no_close)
 
     snapshot = {
         "workspace_id": "telegram:-100:main",

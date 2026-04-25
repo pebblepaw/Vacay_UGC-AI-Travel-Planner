@@ -68,6 +68,22 @@ def _make_trip(trip_id: str = "trip_ws_bind") -> Trip:
     )
 
 
+def _make_empty_trip(trip_id: str = "trip_ws_empty") -> Trip:
+    return Trip(
+        trip_id=trip_id,
+        title="Workspace Shell Trip",
+        source_videos=[],
+        days=[],
+        accommodation=Accommodation(
+            name="Add media or ask for flights to begin",
+            price_per_night=0,
+            status="Pending",
+            img="https://placehold.co/600x400/f5ede8/372f2f?text=VacayClaw",
+            coords=(0.0, 0.0),
+        ),
+    )
+
+
 @pytest.mark.asyncio
 async def test_workspace_import_binds_real_trip_then_snapshot(monkeypatch: pytest.MonkeyPatch):
     workspace_id = "telegram:-10011:main"
@@ -294,6 +310,14 @@ async def test_workspace_chat_rebuilds_snapshot_after_agent_run(monkeypatch: pyt
         ),
     )
     monkeypatch.setattr(workspaces_router.workspace_runtime, "build_workspace_snapshot", snapshot_builder)
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "ensure_workspace", AsyncMock(return_value=None))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "get_workspace_trip_id", AsyncMock(return_value=trip.trip_id))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "load_runtime_state", AsyncMock(return_value={}))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "save_runtime_state", AsyncMock(return_value=None))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "append_event", AsyncMock(return_value=None))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "list_events", AsyncMock(return_value=[]))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "list_memory", AsyncMock(return_value={}))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "bind_workspace_to_trip", AsyncMock(return_value=None))
 
     await workspace_runtime.ensure_workspace(workspace_id)
     await workspaces_router._invoke_workspace_agent(workspace_id, "plan flights", user_id="1", source="telegram")
@@ -301,7 +325,9 @@ async def test_workspace_chat_rebuilds_snapshot_after_agent_run(monkeypatch: pyt
     snapshot_builder.assert_awaited_once_with(workspace_id, trip)
     workspaces_router.app.ainvoke.assert_awaited_once()
     _, kwargs = workspaces_router.app.ainvoke.await_args
-    assert kwargs["config"]["configurable"]["thread_id"] == workspace_id
+    thread_id = kwargs["config"]["configurable"]["thread_id"]
+    assert thread_id.startswith(f"{workspace_id}:turn_")
+    assert thread_id != workspace_id
 
 
 @pytest.mark.asyncio
@@ -349,6 +375,60 @@ async def test_workspace_chat_clears_stale_langgraph_state_before_agent_run(monk
     await workspaces_router._invoke_workspace_agent(workspace_id, "book flights", user_id="1", source="telegram")
 
     clear_mock.assert_awaited_once_with(workspace_id)
+
+
+@pytest.mark.asyncio
+async def test_workspace_chat_uses_fresh_langgraph_thread_per_turn(monkeypatch: pytest.MonkeyPatch):
+    workspace_id = "telegram:-10045:main"
+    trip = _make_trip("trip_fresh_thread")
+    seen_thread_ids: list[str] = []
+
+    async def _load_trip(trip_id: str):
+        if trip_id == trip.trip_id:
+            return trip
+        return None
+
+    async def _ainvoke(initial_state, config):
+        seen_thread_ids.append(config["configurable"]["thread_id"])
+        return {
+            "messages": [AIMessage(content="Done")],
+            "trip": trip,
+            "chat_interrupt": None,
+            "booking_context": None,
+            "booking_offers": None,
+            "selected_offer": None,
+            "booking_result": None,
+        }
+
+    monkeypatch.setattr(
+        workspaces_router,
+        "storage",
+        SimpleNamespace(
+            load_trip=AsyncMock(side_effect=_load_trip),
+            save_trip=AsyncMock(return_value=True),
+            list_all_trips=AsyncMock(return_value=[trip]),
+            seed_placeholder_if_empty=AsyncMock(return_value=None),
+        ),
+    )
+    monkeypatch.setattr(workspaces_router, "app", SimpleNamespace(ainvoke=AsyncMock(side_effect=_ainvoke)))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "ensure_workspace", AsyncMock(return_value=None))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "get_workspace_trip_id", AsyncMock(return_value=trip.trip_id))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "load_runtime_state", AsyncMock(return_value={}))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "save_runtime_state", AsyncMock(return_value=None))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "append_event", AsyncMock(return_value=None))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "build_workspace_snapshot", AsyncMock(return_value={}))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "list_events", AsyncMock(return_value=[]))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "list_memory", AsyncMock(return_value={}))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "bind_workspace_to_trip", AsyncMock(return_value=None))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "clear_langgraph_state", AsyncMock(return_value=None))
+
+    await workspaces_router.workspace_runtime.ensure_workspace(workspace_id)
+    await workspaces_router._invoke_workspace_agent(workspace_id, "plan flights", user_id="1", source="telegram")
+    await workspaces_router._invoke_workspace_agent(workspace_id, "shrink it to 2 days", user_id="1", source="telegram")
+
+    assert len(seen_thread_ids) == 2
+    assert seen_thread_ids[0] != seen_thread_ids[1]
+    assert all(thread_id.startswith(f"{workspace_id}:turn_") for thread_id in seen_thread_ids)
 
 
 @pytest.mark.asyncio
@@ -655,6 +735,88 @@ async def test_workspace_existing_trip_ingest_stashes_pending_candidates_without
     assert saved_trip["trip"].days[0].pois[0].name == existing_trip.days[0].pois[0].name
     assert any(video.url == "https://www.tiktok.com/@demo/video/cinema" for video in saved_trip["trip"].source_videos)
     assert saved_runtime_state["state"]["pending_import_candidates"][0]["name"] == "Golden Age Cinema"
+
+
+@pytest.mark.asyncio
+async def test_workspace_import_replaces_empty_shell_trip_with_built_itinerary(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    workspace_id = "telegram:-10066:main"
+    existing_trip = _make_empty_trip("trip_empty_shell")
+    imported_trip = _make_trip("trip_imported_seed")
+    saved_trip: dict[str, Trip] = {}
+
+    async def _load_trip(trip_id: str):
+        if trip_id == existing_trip.trip_id:
+            return existing_trip
+        if trip_id == imported_trip.trip_id:
+            return imported_trip
+        return None
+
+    async def _save_trip(trip: Trip):
+        saved_trip["trip"] = trip
+        return True
+
+    monkeypatch.setattr(
+        workspaces_router,
+        "video_downloader",
+        SimpleNamespace(
+            download_multiple=AsyncMock(
+                return_value=[
+                    {
+                        "success": True,
+                        "url": "https://www.tiktok.com/@demo/video/seed",
+                        "file_path": "/tmp/seed.mp4",
+                        "title": "Seed clip",
+                        "platform": "tiktok",
+                    }
+                ]
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        workspaces_router,
+        "gemini_analyzer",
+        SimpleNamespace(
+            analyze_multiple_videos=AsyncMock(
+                return_value=[SimpleNamespace(locations=[{"name": "Tokyo Tower"}], metadata={})]
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        workspaces_router,
+        "itinerary_builder",
+        SimpleNamespace(build_itinerary=AsyncMock(return_value=imported_trip)),
+    )
+    monkeypatch.setattr(
+        workspaces_router,
+        "storage",
+        SimpleNamespace(
+            load_trip=AsyncMock(side_effect=_load_trip),
+            save_trip=AsyncMock(side_effect=_save_trip),
+            list_all_trips=AsyncMock(return_value=[existing_trip]),
+            seed_placeholder_if_empty=AsyncMock(return_value=None),
+        ),
+    )
+    monkeypatch.setattr(
+        workspaces_router.workspace_runtime,
+        "get_workspace_trip_id",
+        AsyncMock(return_value=existing_trip.trip_id),
+    )
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "save_runtime_state", AsyncMock())
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "append_event", AsyncMock())
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "build_workspace_snapshot", AsyncMock(return_value={}))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "bind_workspace_to_trip", AsyncMock())
+
+    result = await workspaces_router.process_workspace_videos(
+        workspace_id,
+        VideoProcessRequest(urls=["https://www.tiktok.com/@demo/video/seed"]),
+    )
+
+    assert result["trip_id"] == existing_trip.trip_id
+    assert saved_trip["trip"].trip_id == existing_trip.trip_id
+    assert len(saved_trip["trip"].days) == 1
+    assert saved_trip["trip"].days[0].pois[0].name == "Tokyo Tower"
 
 
 @pytest.mark.asyncio

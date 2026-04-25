@@ -20,13 +20,14 @@ KEY DESIGN DECISIONS:
 """
 from __future__ import annotations
 
-from contextlib import AbstractContextManager
+import asyncio
+from contextlib import AbstractAsyncContextManager, AbstractContextManager
 import logging
-import signal
 from typing import Any
 
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from backend.config import settings
@@ -225,7 +226,12 @@ def _compile_graph(checkpointer: PostgresSaver | None = None) -> Any:
 
 
 _compiled_app: Any = _compile_graph()
-_checkpointer_context: AbstractContextManager[PostgresSaver] | None = None
+_checkpointer_context: (
+    AbstractContextManager[PostgresSaver]
+    | AbstractAsyncContextManager[AsyncPostgresSaver]
+    | AbstractContextManager[SupabaseWorkspaceCheckpointer]
+    | None
+) = None
 
 
 def get_graph_app() -> Any:
@@ -243,10 +249,10 @@ def _normalize_checkpoint_url(checkpoint_url: str) -> str:
     return normalized
 
 
-def configure_graph_checkpointer(conn_string: str | None = None) -> bool:
+async def configure_graph_checkpointer(conn_string: str | None = None) -> bool:
     global _compiled_app, _checkpointer_context
 
-    close_graph_checkpointer()
+    await close_graph_checkpointer()
     checkpoint_url = conn_string or settings.LANGGRAPH_CHECKPOINT_URL
     if not checkpoint_url:
         _compiled_app = _compile_graph()
@@ -254,24 +260,14 @@ def configure_graph_checkpointer(conn_string: str | None = None) -> bool:
 
     try:
         checkpoint_url = _normalize_checkpoint_url(checkpoint_url)
-
-        def _raise_timeout(signum, frame):
-            raise TimeoutError("Timed out while connecting LangGraph Postgres checkpointer")
-
-        previous_handler = signal.getsignal(signal.SIGALRM)
-        signal.signal(signal.SIGALRM, _raise_timeout)
-        signal.setitimer(signal.ITIMER_REAL, 10)
-        try:
-            context = PostgresSaver.from_conn_string(checkpoint_url)
-            saver = context.__enter__()
-            saver.setup()
+        async with asyncio.timeout(10):
+            context = AsyncPostgresSaver.from_conn_string(checkpoint_url)
+            saver = await context.__aenter__()
+            await saver.setup()
             _checkpointer_context = context
             _compiled_app = _compile_graph(checkpointer=saver)
             logger.info("Configured LangGraph Postgres checkpointer")
             return True
-        finally:
-            signal.setitimer(signal.ITIMER_REAL, 0)
-            signal.signal(signal.SIGALRM, previous_handler)
     except Exception as exc:
         logger.warning("LangGraph Postgres checkpointer unavailable: %s", exc)
 
@@ -283,17 +279,20 @@ def configure_graph_checkpointer(conn_string: str | None = None) -> bool:
         return True
     except Exception as exc:
         logger.warning("LangGraph durable checkpointer unavailable, falling back to stateless graph: %s", exc)
-        close_graph_checkpointer()
+        await close_graph_checkpointer()
         _compiled_app = _compile_graph()
         return False
 
 
-def close_graph_checkpointer() -> None:
+async def close_graph_checkpointer() -> None:
     global _checkpointer_context
     if _checkpointer_context is None:
         return
     try:
-        _checkpointer_context.__exit__(None, None, None)
+        if hasattr(_checkpointer_context, "__aexit__"):
+            await _checkpointer_context.__aexit__(None, None, None)
+        else:
+            _checkpointer_context.__exit__(None, None, None)
     finally:
         _checkpointer_context = None
 

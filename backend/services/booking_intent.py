@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import date
+import re
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -43,6 +44,34 @@ class BookingIntent(BaseModel):
     follow_up_question: str = ""
 
 
+MONTH_LOOKUP = {
+    "jan": 1,
+    "january": 1,
+    "feb": 2,
+    "february": 2,
+    "mar": 3,
+    "march": 3,
+    "apr": 4,
+    "april": 4,
+    "may": 5,
+    "jun": 6,
+    "june": 6,
+    "jul": 7,
+    "july": 7,
+    "aug": 8,
+    "august": 8,
+    "sep": 9,
+    "sept": 9,
+    "september": 9,
+    "oct": 10,
+    "october": 10,
+    "nov": 11,
+    "november": 11,
+    "dec": 12,
+    "december": 12,
+}
+
+
 def _format_trip_context(trip: Any) -> str:
     if not trip:
         return "No trip context."
@@ -65,6 +94,151 @@ def _extract_json_block(text: str) -> dict[str, Any]:
     return json.loads(stripped)
 
 
+def _empty_non_booking_intent() -> BookingIntent:
+    return BookingIntent(
+        is_booking_request=False,
+        booking_type="",
+        provider_hint="",
+        missing_fields=[],
+        can_search=False,
+        follow_up_question="",
+    )
+
+
+def _looks_like_booking_request(message: str) -> bool:
+    lowered = (message or "").lower()
+    if not lowered.strip():
+        return False
+    tokens = (
+        "flight",
+        "flights",
+        "airline",
+        "airport",
+        "trip.com",
+        "tripcom",
+        "book ",
+        "booking",
+        "checkout",
+        "return flight",
+        "round trip",
+        "one way",
+        "one-way",
+        "pax",
+        "adults",
+        "business class",
+        "economy",
+        "premium economy",
+    )
+    return any(token in lowered for token in tokens)
+
+
+def _infer_year(month: int, day: int, *, today: date) -> int:
+    candidate = date(today.year, month, day)
+    if candidate >= today:
+        return today.year
+    return today.year + 1
+
+
+def _parse_day_month(day_text: str, month_text: str, *, today: date) -> str:
+    month = MONTH_LOOKUP.get(month_text.strip().lower())
+    if month is None:
+        return ""
+    day = int(day_text)
+    year = _infer_year(month, day, today=today)
+    return date(year, month, day).isoformat()
+
+
+def _heuristic_booking_intent(*, message: str, today: date) -> BookingIntent:
+    lowered = (message or "").lower()
+    if not _looks_like_booking_request(message):
+        return _empty_non_booking_intent()
+
+    intent = BookingIntent()
+
+    destination_match = re.search(
+        r"\b(?:flight|flights)\s+to\s+([A-Za-z][A-Za-z\s]+?)(?:\s+for\b|\s+on\b|,|\.|$)",
+        message,
+        re.IGNORECASE,
+    )
+    if destination_match:
+        destination = re.sub(r"\s+", " ", destination_match.group(1)).strip()
+        intent.destination = destination
+        intent.destination_source = "user"
+        uppercase = destination.upper()
+        if uppercase in {"SYD", "SIN", "MIL", "TYO", "HND", "NRT"}:
+            intent.destination_code = uppercase
+            intent.destination_city_code = uppercase
+    pax_match = re.search(r"\b(\d+)\s*(?:pax|people|persons|travellers|travelers|adults?)\b", lowered)
+    if pax_match:
+        intent.adults = int(pax_match.group(1))
+        intent.adults_source = "user"
+
+    if "business" in lowered:
+        intent.cabin = "business"
+    elif "premium economy" in lowered:
+        intent.cabin = "premium_economy"
+    elif "first class" in lowered or re.search(r"\bfirst\b", lowered):
+        intent.cabin = "first"
+    elif "economy" in lowered:
+        intent.cabin = "economy"
+
+    explicit_round_trip = any(token in lowered for token in ("round trip", "round-trip", "return flight", "return "))
+    explicit_one_way = any(token in lowered for token in ("one way", "one-way"))
+
+    range_match = re.search(
+        r"\b(?:weekend of\s+)?(\d{1,2})(?:st|nd|rd|th)?\s*(?:to|-|until)\s*(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)\b",
+        lowered,
+    )
+    if range_match:
+        departure_date = _parse_day_month(range_match.group(1), range_match.group(3), today=today)
+        return_date = _parse_day_month(range_match.group(2), range_match.group(3), today=today)
+        if departure_date:
+            intent.departure_date = departure_date
+            intent.departure_date_source = "user"
+        if return_date:
+            intent.return_date = return_date
+        explicit_round_trip = True
+
+    if explicit_round_trip:
+        intent.trip_type = "round_trip"
+        intent.trip_type_source = "user"
+    elif explicit_one_way:
+        intent.trip_type = "one_way"
+        intent.trip_type_source = "user"
+
+    default_origin = get_default_flight_origin()
+    if default_origin.get("name"):
+        intent.origin = default_origin["name"]
+        intent.origin_code = default_origin.get("airport_code", "")
+        intent.origin_city_code = default_origin.get("city_code", "")
+        intent.origin_source = "inference"
+
+    missing_fields: list[str] = []
+
+    if not intent.origin:
+        missing_fields.append("origin airport")
+    if not intent.destination:
+        missing_fields.append("destination")
+    if not intent.departure_date:
+        missing_fields.append("departure date")
+    if not intent.trip_type:
+        missing_fields.append("trip type")
+    if not intent.adults:
+        missing_fields.append("adult count")
+
+    intent.missing_fields = missing_fields
+    intent.can_search = not missing_fields
+
+    if missing_fields:
+        intent.follow_up_question = render_copy(
+            "booking.missing_details",
+            fields=", ".join(missing_fields),
+            provider=intent.provider_hint or "trip.com",
+        )
+
+    return intent
+
+
 def normalize_booking_intent(
     *,
     message: str,
@@ -72,7 +246,9 @@ def normalize_booking_intent(
     history: list[Any] | None = None,
     llm: Any | None = None,
 ) -> BookingIntent:
-    llm = llm or get_agent_llm(role="booking_intent", temperature=0)
+    if not _looks_like_booking_request(message):
+        return _empty_non_booking_intent()
+
     trip_context = _format_trip_context(trip)
     recent_history = []
     for item in history or []:
@@ -81,6 +257,9 @@ def normalize_booking_intent(
             recent_history.append(str(content))
     history_text = "\n".join(recent_history[-6:]) or "No recent chat history."
     today = date.today().isoformat()
+    heuristic_intent = _heuristic_booking_intent(message=message, today=date.fromisoformat(today))
+
+    llm = llm or get_agent_llm(role="booking_intent", temperature=0)
 
     system = SystemMessage(
         content=(
@@ -128,9 +307,12 @@ def normalize_booking_intent(
         )
     )
 
-    response = llm.invoke([system, human])
-    payload = _extract_json_block(getattr(response, "content", ""))
-    intent = BookingIntent.model_validate(payload)
+    try:
+        response = llm.invoke([system, human])
+        payload = _extract_json_block(getattr(response, "content", ""))
+        intent = BookingIntent.model_validate(payload)
+    except Exception:
+        intent = heuristic_intent
 
     if not intent.is_booking_request:
         intent.booking_type = ""

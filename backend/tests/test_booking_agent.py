@@ -1,4 +1,5 @@
 import json
+from datetime import date
 
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -13,6 +14,11 @@ class FakeIntentLLM:
 
     def invoke(self, messages):
         return AIMessage(content=json.dumps(self.payload))
+
+
+class FailingIntentLLM:
+    def invoke(self, messages):
+        raise RuntimeError("llm unavailable")
 
 
 def make_trip() -> Trip:
@@ -106,6 +112,50 @@ def test_normalize_booking_intent_handles_natural_language_round_trip() -> None:
     assert intent.destination_city_code == "MIL"
     assert intent.departure_date == "2026-04-19"
     assert intent.return_date == "2026-04-25"
+    assert intent.trip_type == "round_trip"
+    assert intent.adults == 2
+    assert intent.can_search is True
+
+
+def test_normalize_booking_intent_short_circuits_non_booking_without_llm() -> None:
+    intent = normalize_booking_intent(
+        message="Shrink it to 2 days",
+        trip=make_trip(),
+        llm=FailingIntentLLM(),
+    )
+
+    assert intent.is_booking_request is False
+    assert intent.can_search is False
+    assert intent.booking_type == ""
+
+
+def test_normalize_booking_intent_falls_back_when_llm_unavailable(monkeypatch) -> None:
+    class FakeDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 4, 25)
+
+    monkeypatch.setattr("backend.services.booking_intent.date", FakeDate)
+    monkeypatch.setattr(
+        "backend.services.booking_intent.get_default_flight_origin",
+        lambda: {
+            "name": "Singapore Changi Airport",
+            "airport_code": "SIN",
+            "city_code": "SIN",
+        },
+    )
+
+    intent = normalize_booking_intent(
+        message="Book a flight to Sydney for 2 pax, on the weekend of 2nd to 4th May.",
+        trip=make_trip(),
+        llm=FailingIntentLLM(),
+    )
+
+    assert intent.origin == "Singapore Changi Airport"
+    assert intent.origin_code == "SIN"
+    assert intent.destination == "Sydney"
+    assert intent.departure_date == "2026-05-02"
+    assert intent.return_date == "2026-05-04"
     assert intent.trip_type == "round_trip"
     assert intent.adults == 2
     assert intent.can_search is True
