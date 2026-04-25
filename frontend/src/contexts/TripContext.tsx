@@ -6,8 +6,10 @@ import {
   listTrips,
   sendWorkspaceMessage,
   getWorkspaceSnapshot,
+  getWorkspaceEventsWebSocketUrl,
   createWorkspaceShareLink,
   processWorkspaceVideos,
+  type WorkspaceSnapshotResponse,
 } from '@/lib/api';
 import { createClientMessageId, PendingChatMessage } from '@/lib/chatMessages';
 import { useToast } from '@/hooks/use-toast';
@@ -27,7 +29,7 @@ interface TripContextType {
   activeView: 'timeline' | 'cards';
   setActiveView: (view: 'timeline' | 'cards') => void;
   isLoading: boolean;
-  mediaByPlace: Record<string, Array<{ title: string; url: string; platform: string; autoplay: boolean }>>;
+  mediaByPlace: Record<string, Array<{ title: string; url: string; source_url?: string; platform: string; autoplay: boolean }>>;
   createShareLink: () => Promise<string | null>;
   refreshWorkspaceSnapshot: () => Promise<void>;
   ingestWorkspaceUrls: (urls: string[]) => Promise<{ imported: number; failed: number }>;
@@ -61,12 +63,19 @@ export const mapWorkspaceEventsToMessages = (events: Array<Record<string, unknow
     }));
 };
 
+export const hydrateWorkspaceSnapshot = (snapshot: WorkspaceSnapshotResponse) => ({
+  trip: snapshot.trip,
+  mediaByPlace: snapshot.media_by_place || {},
+  chatMessages: mapWorkspaceEventsToMessages(snapshot.recent_events || []),
+});
+
 export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId, workspaceId, workspaceToken }) => {
   const [trip, setTrip] = useState<Trip>(sampleTrip);
   const [selectedPOI, setSelectedPOI] = useState<POI | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(workspaceId ? [] : initialChatMessages);
-  const [mediaByPlace, setMediaByPlace] = useState<Record<string, Array<{ title: string; url: string; platform: string; autoplay: boolean }>>>({});
+  const [mediaByPlace, setMediaByPlace] = useState<Record<string, Array<{ title: string; url: string; source_url?: string; platform: string; autoplay: boolean }>>>({});
   const chatMessagesRef = useRef<ChatMessage[]>(workspaceId ? [] : initialChatMessages);
+  const workspaceLoadedRef = useRef(false);
 
   useEffect(() => {
     chatMessagesRef.current = chatMessages;
@@ -77,13 +86,18 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId, wo
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
 
+  const applyWorkspaceSnapshot = useCallback((snapshot: WorkspaceSnapshotResponse) => {
+    const hydrated = hydrateWorkspaceSnapshot(snapshot);
+    setTrip(hydrated.trip);
+    setMediaByPlace(hydrated.mediaByPlace);
+    setChatMessages(hydrated.chatMessages);
+  }, []);
+
   const refreshWorkspaceSnapshot = useCallback(async () => {
     if (!workspaceId) return;
     const snapshot = await getWorkspaceSnapshot(workspaceId, workspaceToken);
-    setTrip(snapshot.trip);
-    setMediaByPlace(snapshot.media_by_place || {});
-    setChatMessages(mapWorkspaceEventsToMessages(snapshot.recent_events || []));
-  }, [workspaceId, workspaceToken]);
+    applyWorkspaceSnapshot(snapshot);
+  }, [workspaceId, workspaceToken, applyWorkspaceSnapshot]);
 
   useEffect(() => {
     const loadTrip = async (id: string) => {
@@ -108,20 +122,25 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId, wo
 
     const loadWorkspaceSnapshot = async () => {
       if (!workspaceId) return;
-      setIsLoading(true);
+      const shouldBlock = !workspaceLoadedRef.current;
+      if (shouldBlock) {
+        setIsLoading(true);
+      }
       try {
         await refreshWorkspaceSnapshot();
+        workspaceLoadedRef.current = true;
       } catch (error: any) {
         toast({ variant: 'destructive', title: 'Workspace load failed', description: error.message });
       } finally {
-        setIsLoading(false);
+        if (shouldBlock) {
+          setIsLoading(false);
+        }
       }
     };
 
     if (workspaceId) {
       loadWorkspaceSnapshot();
-      const timer = setInterval(loadWorkspaceSnapshot, 6000);
-      return () => clearInterval(timer);
+      return;
     }
 
     if (tripId) {
@@ -150,6 +169,47 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId, wo
       })
       .finally(() => setIsLoading(false));
   }, [tripId, workspaceId, workspaceToken, toast, refreshWorkspaceSnapshot]);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+
+    let disposed = false;
+    let reconnectTimer: number | undefined;
+    let socket: WebSocket | null = null;
+
+    const connect = () => {
+      if (disposed) return;
+      socket = new WebSocket(getWorkspaceEventsWebSocketUrl(workspaceId, workspaceToken));
+
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data) as { type?: string; snapshot?: WorkspaceSnapshotResponse };
+          if (payload.type === 'snapshot' && payload.snapshot) {
+            applyWorkspaceSnapshot(payload.snapshot);
+            workspaceLoadedRef.current = true;
+            setIsLoading(false);
+          }
+        } catch {
+          // Ignore malformed socket payloads and rely on the next update.
+        }
+      };
+
+      socket.onclose = () => {
+        if (!disposed) {
+          reconnectTimer = window.setTimeout(connect, 2000);
+        }
+      };
+    };
+
+    connect();
+    return () => {
+      disposed = true;
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer);
+      }
+      socket?.close();
+    };
+  }, [workspaceId, workspaceToken, applyWorkspaceSnapshot]);
 
   const addChatMessage = useCallback((message: PendingChatMessage) => {
     const newMessage: ChatMessage = {
@@ -272,12 +332,10 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId, wo
         throw new Error('Workspace ID is required for workspace ingest');
       }
       const result = await processWorkspaceVideos(workspaceId, urls);
-      setTrip(result.snapshot.trip);
-      setMediaByPlace(result.snapshot.media_by_place || {});
-      setChatMessages(mapWorkspaceEventsToMessages(result.snapshot.recent_events || []));
+      applyWorkspaceSnapshot(result.snapshot);
       return { imported: result.imported_count, failed: result.failed_count };
     },
-    [workspaceId],
+    [workspaceId, applyWorkspaceSnapshot],
   );
 
   return (

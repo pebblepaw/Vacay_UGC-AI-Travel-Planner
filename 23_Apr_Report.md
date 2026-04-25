@@ -15,15 +15,33 @@
 - [x] Create the `VacayClaw` runtime shell and replace the current trip-scoped chat entrypoint with workspace-scoped routing.
 - [x] Add Telegram webhook ingestion keyed by `chat_id + message_thread_id`.
 - [x] Replace the current trip JSON storage model with the hybrid workspace data model.
-- [x] Add durable LangGraph persistence and remove all in-memory booking and chat session state.
+- [ ] Add durable LangGraph persistence and remove all in-memory booking and chat session state.
 - [x] Add workspace memory and user memory.
 - [x] Extend media ingestion to TikTok, YouTube, Instagram, Douyin, and Rednote in one shared workspace flow.
 - [x] Add media-to-place linking so the bot can resolve requests like “add the cafe in this TikTok”.
 - [x] Rebuild the frontend around workspace snapshots, live updates, and shared web chat.
 - [x] Add per-location media folders with autoplay clips on the desktop web view.
-- [x] Replace URL-only booking handoff with a cloud browser session handoff that survives remote use.
-- [x] Deploy the full stack on one EC2 host with Docker Compose, Nginx, and Telegram webhooks.
-- [x] Write end-to-end tests and a fixed demo script for the final presentation.
+- [ ] Replace URL-only booking handoff with a cloud browser session handoff that survives remote use.
+- [ ] Deploy the full stack on one EC2 host with Docker Compose, Nginx, and Telegram webhooks.
+- [ ] Write end-to-end tests and a fixed demo script for the final presentation.
+
+## Execution Status (April 25, 2026)
+
+What is working on the current branch:
+
+- Shared workspace routing, persistence, snapshots, and signed web handoff.
+- Telegram webhook ingestion and outbound replies, with group-tag gating.
+- Multi-link media ingestion across TikTok, YouTube, and Instagram.
+- Shared web timeline plus per-location media folders, with local preview playback for downloaded media.
+- Sample itinerary flow from `Sample_Inputs/VacayClaw_test.md` steps 1 to 5 against the local stack.
+- Step 5 now reaches the real Trip.com traveler page in a live Playwright browser window and stops before payment.
+
+What is still open against the target plan:
+
+- The booking handoff is still a local live-browser handoff, not a signed remote browser takeover page.
+- `live_booking_sessions` still keeps booking browser state in memory.
+- The repo has Docker Compose scaffolding, but the single-host EC2 deployment and browser-worker stack are not finished on this branch.
+- The public manual-test path currently uses Cloudflare quick tunnels, not the intended EC2 host.
 
 ## Decision: Build VacayClaw Here
 

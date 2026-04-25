@@ -80,7 +80,8 @@ async def process_videos(
         video_data_for_analysis = [
             {
                 'file_path': r['file_path'],
-                'title': r['title']
+                'title': r['title'],
+                'caption': r.get('description') or r['title'],
             }
             for r in successful_downloads
         ]
@@ -113,14 +114,21 @@ async def process_videos(
             )
         
         # Step 3: Build itinerary
-        video_metadata = [
-            {
-                'url': request.urls[i],
-                'title': r['title'],
-                'platform': r['platform']
-            }
-            for i, r in enumerate(successful_downloads)
-        ]
+        video_metadata = []
+        for index, result in enumerate(successful_downloads):
+            source_url = result.get("url")
+            if not source_url and index < len(request.urls):
+                source_url = request.urls[index]
+
+            video_metadata.append(
+                {
+                    "url": source_url or "",
+                    "title": result["title"],
+                    "platform": result["platform"],
+                    "preview_url": result.get("preview_url"),
+                    "thumbnail_url": result.get("thumbnail"),
+                }
+            )
         
         try:
             trip = await itinerary_builder.build_itinerary(
@@ -141,12 +149,6 @@ async def process_videos(
                 status_code=500,
                 detail="Failed to save trip to storage"
             )
-        
-        # Step 5: Clean up downloaded videos in background
-        for result in successful_downloads:
-            file_path = result.get('file_path')
-            if file_path:
-                background_tasks.add_task(video_downloader.cleanup_video, file_path)
         
         # Return success response
         return VideoProcessResponse(

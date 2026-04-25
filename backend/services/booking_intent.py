@@ -9,7 +9,11 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from backend.app_config import get_assistant_language_instruction, render_copy
+from backend.app_config import (
+    get_assistant_language_instruction,
+    get_default_flight_origin,
+    render_copy,
+)
 from backend.llm import get_agent_llm
 
 
@@ -136,7 +140,21 @@ def normalize_booking_intent(
         intent.follow_up_question = ""
         return intent
 
-    missing_fields = list(intent.missing_fields)
+    default_origin = get_default_flight_origin()
+    if (
+        not intent.origin
+        and default_origin.get("name")
+        and intent.destination
+        and intent.departure_date
+        and intent.trip_type
+        and intent.adults
+    ):
+        intent.origin = default_origin["name"]
+        intent.origin_code = default_origin.get("airport_code", "")
+        intent.origin_city_code = default_origin.get("city_code", "")
+        intent.origin_source = "inference"
+
+    missing_fields: list[str] = []
 
     def require(field_name: str, value: Any, source: str, allowed_sources: set[str]) -> None:
         if value and source in allowed_sources:
@@ -144,10 +162,10 @@ def normalize_booking_intent(
         if field_name not in missing_fields:
             missing_fields.append(field_name)
 
-    require("origin airport", intent.origin, intent.origin_source, {"user", "trip_context"})
+    require("origin airport", intent.origin, intent.origin_source, {"user", "trip_context", "inference"})
     require("destination", intent.destination, intent.destination_source, {"user", "trip_context"})
     require("departure date", intent.departure_date, intent.departure_date_source, {"user"})
-    require("trip type", intent.trip_type, intent.trip_type_source, {"user"})
+    require("trip type", intent.trip_type, intent.trip_type_source, {"user", "inference"})
     require("adult count", intent.adults, intent.adults_source, {"user"})
 
     intent.missing_fields = missing_fields

@@ -65,10 +65,10 @@ export const MapView = () => {
   useEffect(() => {
     if (!mapContainerRef.current) return;
 
-    const mapboxToken = import.meta.env.VITE_MAPBOX_PUBLIC;
+    const mapboxToken = import.meta.env.VITE_MAPBOX_PUBLIC || import.meta.env.MAPBOX_PUBLIC;
     if (!mapboxToken) {
       console.error('Mapbox token not found');
-      setMapError('Mapbox token missing. Set MAPBOX_PUBLIC in .env and restart start.sh.');
+      setMapError('Mapbox token missing. Set MAPBOX_PUBLIC or VITE_MAPBOX_PUBLIC in the repo .env and restart the frontend.');
       return;
     }
 

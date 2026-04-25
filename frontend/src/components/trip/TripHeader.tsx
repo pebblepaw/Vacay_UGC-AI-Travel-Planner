@@ -8,10 +8,6 @@ import { useToast } from '@/hooks/use-toast';
 
 export const TripHeader = () => {
   const { trip, workspaceId, createShareLink } = useTripContext();
-  const debugApi = import.meta.env.VITE_API_URL || 'relative';
-  const debugWorkspace = import.meta.env.VITE_WORKSPACE_LABEL || 'unknown-workspace';
-  const debugConfig = import.meta.env.VITE_APP_CONFIG_PATH || 'config/config.yaml';
-  const showDebug = import.meta.env.DEV;
   const { toast } = useToast();
 
   const onShare = async () => {
@@ -59,12 +55,7 @@ export const TripHeader = () => {
               </Badge>
               {workspaceId && (
                 <Badge variant="outline" className="gap-1 text-[10px]">
-                  Workspace · {workspaceId}
-                </Badge>
-              )}
-              {showDebug && (
-                <Badge variant="outline" className="hidden md:inline-flex gap-1 text-[10px]">
-                  {debugWorkspace} · {debugApi} · {debugConfig}
+                  Workspace
                 </Badge>
               )}
             </div>

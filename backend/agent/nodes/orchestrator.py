@@ -113,6 +113,67 @@ def _format_trip_with_ids(trip) -> str:
             )
     return "\n".join(lines)
 
+
+def _build_resize_plan(message: str) -> dict | None:
+    lowered = message.lower()
+    if not any(keyword in lowered for keyword in ["shrink", "shorten", "compress", "fit", "make it", "resize", "plan", "itinerary"]):
+        return None
+
+    match = re.search(r"(\d+)\s*[- ]?\s*day", lowered)
+    if not match:
+        return None
+
+    target_days = int(match.group(1))
+    return {
+        "next_node": "travel_editor",
+        "plan": [f"resize trip to {target_days} days"],
+        "current_step": 0,
+        "critique": "",
+        "iteration_count": 0,
+    }
+
+
+def _build_meal_plan(message: str, trip) -> dict | None:
+    lowered = message.lower()
+    meal_words = ["lunch", "dinner", "brunch", "breakfast", "restaurant", "restaurants", "food"]
+    if not any(word in lowered for word in meal_words):
+        return None
+
+    if not trip or not trip.days:
+        return None
+
+    requested_meals: list[str] = []
+    for meal in ["breakfast", "brunch", "lunch", "dinner"]:
+        if meal in lowered:
+            requested_meals.append(meal)
+    if not requested_meals:
+        requested_meals = ["lunch"]
+
+    if "both days" in lowered and len(trip.days) >= 2:
+        target_days = trip.days[:2]
+    else:
+        explicit_days = [int(day) for day in re.findall(r"day\s*(\d+)", lowered)]
+        if explicit_days:
+            target_days = [day for day in trip.days if day.day_number in explicit_days]
+        else:
+            target_days = trip.days
+
+    plan: list[str] = []
+    for day in target_days:
+        for meal in requested_meals:
+            plan.append(f"add a {meal} restaurant stop to day {day.day_number}")
+
+    if not plan:
+        return None
+
+    return {
+        "next_node": "travel_editor",
+        "plan": plan,
+        "current_step": 0,
+        "critique": "",
+        "iteration_count": 0,
+    }
+
 def orchestrator_node(state: AgentState) -> dict: 
     import logging
     _log = logging.getLogger(__name__)
@@ -152,6 +213,15 @@ def orchestrator_node(state: AgentState) -> dict:
     # ── New request or first step: short-circuit booking queries ──
     last_msg = messages[-1].content
     lowered_msg = last_msg.lower()
+
+    resize_plan = _build_resize_plan(last_msg)
+    if resize_plan:
+        return resize_plan
+
+    meal_plan = _build_meal_plan(last_msg, trip)
+    if meal_plan:
+        return meal_plan
+
     booking_keywords = [
         "book",
         "booking",
@@ -232,4 +302,3 @@ def orchestrator_node(state: AgentState) -> dict:
             "current_step": 0,
             "critique": "",
         }
-

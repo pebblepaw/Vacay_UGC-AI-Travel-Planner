@@ -87,6 +87,42 @@ def _extract_recent_actions(messages) -> str:
     return "\n".join(actions) if actions else "No tool actions recorded."
 
 
+def _should_auto_approve_deterministic_edit(state: AgentState, recent_actions: str) -> bool:
+    if state.get("last_agent") != "travel_editor":
+        return False
+
+    plan = state.get("plan") or []
+    current_step = state.get("current_step", 0)
+    instruction = ""
+    if plan and current_step < len(plan):
+        instruction = str(plan[current_step] or "").lower()
+
+    if not instruction:
+        return False
+
+    deterministic_prefixes = (
+        "resize trip to ",
+        "add a breakfast restaurant stop to day ",
+        "add a brunch restaurant stop to day ",
+        "add a lunch restaurant stop to day ",
+        "add a dinner restaurant stop to day ",
+    )
+    if not instruction.startswith(deterministic_prefixes):
+        return False
+
+    return recent_actions != "No tool actions recorded."
+
+
+def _should_auto_approve_booking_step(state: AgentState, recent_actions: str) -> bool:
+    if state.get("last_agent") != "booking_agent":
+        return False
+
+    if state.get("booking_offers") or state.get("selected_offer") or state.get("booking_result"):
+        return True
+
+    return recent_actions != "No tool actions recorded."
+
+
 def critic_node(state: AgentState) -> dict:
     """Critic: validates trip modifications and decides approve/revise/confirm."""
     import logging as _logging
@@ -111,6 +147,20 @@ def critic_node(state: AgentState) -> dict:
 
     trip_context = _format_trip_with_ids(trip)
     recent_actions = _extract_recent_actions(messages)
+
+    if _should_auto_approve_deterministic_edit(state, recent_actions):
+        return {
+            "next_node": "approve",
+            "critique": "",
+            "iteration_count": iteration_count,
+        }
+
+    if _should_auto_approve_booking_step(state, recent_actions):
+        return {
+            "next_node": "approve",
+            "critique": "",
+            "iteration_count": iteration_count,
+        }
 
     # Find the original user request (first HumanMessage)
     user_request = ""

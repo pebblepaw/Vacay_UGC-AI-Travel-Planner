@@ -1,6 +1,7 @@
 """Workspace runtime service for shared Telegram + web collaboration."""
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 import hashlib
 import hmac
@@ -21,6 +22,7 @@ class WorkspaceRuntimeService:
     def __init__(self) -> None:
         self._memory_events: dict[str, list[dict[str, Any]]] = {}
         self._memory_state: dict[str, dict[str, Any]] = {}
+        self._subscribers: dict[str, set[asyncio.Queue[dict[str, Any]]]] = {}
 
     def workspace_id_for_telegram(self, chat_id: int | str, thread_id: int | str | None = None) -> str:
         suffix = thread_id if thread_id is not None else "main"
@@ -34,12 +36,31 @@ class WorkspaceRuntimeService:
     ) -> dict[str, Any]:
         """Ensure workspace row exists; if table is missing, keep in memory."""
         now_iso = datetime.now(timezone.utc).isoformat()
+        existing: dict[str, Any] | None = None
+        try:
+            result = (
+                supabase_storage.client.table("workspaces")
+                .select("id,title,trip_id,source,data")
+                .eq("id", workspace_id)
+                .limit(1)
+                .execute()
+            )
+            if result.data:
+                existing = result.data[0]
+        except Exception:
+            existing = self._memory_state.get(workspace_id)
+
+        existing_data = dict(existing.get("data") or {}) if existing else {}
         payload = {
             "id": workspace_id,
-            "title": title or "VacayClaw Workspace",
-            "trip_id": trip_id or workspace_id.replace(":", "-"),
-            "source": "telegram" if workspace_id.startswith("telegram:") else "web",
-            "data": {"created_at": now_iso, "updated_at": now_iso},
+            "title": title or (existing.get("title") if existing else None) or "VacayClaw Workspace",
+            "trip_id": trip_id or (existing.get("trip_id") if existing else None) or workspace_id.replace(":", "-"),
+            "source": (existing.get("source") if existing else None) or ("telegram" if workspace_id.startswith("telegram:") else "web"),
+            "data": {
+                **existing_data,
+                "created_at": existing_data.get("created_at", now_iso),
+                "updated_at": now_iso,
+            },
         }
         try:
             supabase_storage.client.table("workspaces").upsert(payload).execute()
@@ -131,15 +152,44 @@ class WorkspaceRuntimeService:
         return self._memory_state.get(f"runtime:{workspace_id}", {})
 
     async def save_runtime_state(self, workspace_id: str, state: dict[str, Any]) -> None:
+        existing_state = await self.load_runtime_state(workspace_id)
         payload = {
             "workspace_id": workspace_id,
-            "state": state,
+            "state": {
+                **existing_state,
+                **state,
+            },
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         try:
             supabase_storage.client.table("workspace_runtime_state").upsert(payload).execute()
         except Exception:
-            self._memory_state[f"runtime:{workspace_id}"] = state
+            self._memory_state[f"runtime:{workspace_id}"] = payload["state"]
+
+    async def clear_langgraph_state(self, workspace_id: str) -> None:
+        """Drop persisted LangGraph checkpoints before a new top-level turn.
+
+        Workspace memory, booking context, and pending import candidates live in
+        the same runtime blob. Keep those fields intact and only remove the
+        graph checkpoint branch so a fresh request does not inherit stale plan
+        state from an earlier turn.
+        """
+        state = await self.load_runtime_state(workspace_id)
+        if not state or "langgraph" not in state:
+            return
+
+        trimmed_state = dict(state)
+        trimmed_state.pop("langgraph", None)
+
+        payload = {
+            "workspace_id": workspace_id,
+            "state": trimmed_state,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            supabase_storage.client.table("workspace_runtime_state").upsert(payload).execute()
+        except Exception:
+            self._memory_state[f"runtime:{workspace_id}"] = trimmed_state
 
     async def upsert_memory(self, workspace_id: str, user_id: str | None, key: str, value: Any) -> None:
         payload = {
@@ -169,6 +219,29 @@ class WorkspaceRuntimeService:
             pass
         return self._memory_state.get(f"memory:{workspace_id}:{user_id or 'workspace'}", {})
 
+    def subscribe(self, workspace_id: str) -> asyncio.Queue[dict[str, Any]]:
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=8)
+        self._subscribers.setdefault(workspace_id, set()).add(queue)
+        return queue
+
+    def unsubscribe(self, workspace_id: str, queue: asyncio.Queue[dict[str, Any]]) -> None:
+        listeners = self._subscribers.get(workspace_id)
+        if not listeners:
+            return
+        listeners.discard(queue)
+        if not listeners:
+            self._subscribers.pop(workspace_id, None)
+
+    async def publish_snapshot(self, workspace_id: str, snapshot: dict[str, Any]) -> None:
+        payload = {"type": "snapshot", "snapshot": snapshot}
+        for queue in list(self._subscribers.get(workspace_id, set())):
+            try:
+                if queue.full():
+                    queue.get_nowait()
+                queue.put_nowait(payload)
+            except Exception:
+                self.unsubscribe(workspace_id, queue)
+
     async def build_workspace_snapshot(self, workspace_id: str, trip: Trip) -> dict[str, Any]:
         """Derive a snapshot for web clients from trip + workspace state."""
         state = await self.load_runtime_state(workspace_id)
@@ -176,18 +249,40 @@ class WorkspaceRuntimeService:
         events = await self.list_events(workspace_id, limit=50)
 
         media_by_place: dict[str, list[dict[str, Any]]] = {}
+        video_lookup: dict[str, Any] = {}
         for video in trip.source_videos:
-            for day in trip.days:
-                for poi in day.pois:
-                    if poi.name.lower().split()[0] in video.title.lower():
-                        media_by_place.setdefault(poi.id, []).append(
+            for key in (video.url, video.preview_url):
+                if key:
+                    video_lookup[key] = video
+
+        for day in trip.days:
+            for poi in day.pois:
+                poi_media: list[dict[str, Any]] = []
+                for media_url in poi.media_urls:
+                    video = video_lookup.get(media_url)
+                    if video:
+                        playback_url = video.preview_url or video.url
+                        poi_media.append(
                             {
                                 "title": video.title,
-                                "url": video.url,
+                                "url": playback_url,
+                                "source_url": video.url,
                                 "platform": video.platform,
-                                "autoplay": True,
+                                "autoplay": bool(video.preview_url or video.platform == "youtube"),
                             }
                         )
+                    else:
+                        poi_media.append(
+                            {
+                                "title": poi.name,
+                                "url": media_url,
+                                "source_url": media_url,
+                                "platform": "unknown",
+                                "autoplay": False,
+                            }
+                        )
+                if poi_media:
+                    media_by_place[poi.id] = poi_media
 
         snapshot = {
             "workspace_id": workspace_id,
@@ -208,6 +303,7 @@ class WorkspaceRuntimeService:
             ).execute()
         except Exception:
             self._memory_state[f"snapshot:{workspace_id}"] = snapshot
+        await self.publish_snapshot(workspace_id, snapshot)
         return snapshot
 
     async def get_workspace_snapshot(self, workspace_id: str) -> dict[str, Any] | None:

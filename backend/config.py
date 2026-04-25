@@ -2,6 +2,7 @@
 Configuration module for backend services.
 Loads environment variables and provides typed settings.
 """
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 from pathlib import Path
 from typing import Optional
@@ -27,6 +28,18 @@ class Settings(BaseSettings):
     # Supabase
     SUPABASE_PROJECT_URL: str
     SUPABASE_SECRET_KEY: str
+    SUPABASE_SERVICE_ROLE_KEY: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SERVICE_ROLE"),
+    )
+    LANGGRAPH_CHECKPOINT_URL: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "LANGGRAPH_CHECKPOINT_URL",
+            "SUPABASE_SESSION_POOLER",
+            "SUPBASE_CONNECTION_STRING",
+        ),
+    )
 
     # Optional settings with defaults
     DEBUG: str = "true"
@@ -35,6 +48,7 @@ class Settings(BaseSettings):
     TELEGRAM_WEBHOOK_SECRET: Optional[str] = None
     TELEGRAM_BOT_TOKEN: Optional[str] = None
     PUBLIC_WEB_BASE_URL: str = "http://localhost:5173"
+    PUBLIC_API_BASE_URL: str = "http://127.0.0.1:8000"
 
     # Paths
     DOWNLOADS_DIR: Path = PROJECT_ROOT / "downloads"

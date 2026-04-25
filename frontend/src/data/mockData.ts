@@ -4,6 +4,8 @@ export interface SourceVideo {
   platform: 'tiktok' | 'douyin' | 'youtube' | 'rednote' | 'instagram';
   url: string;
   title: string;
+  preview_url?: string;
+  thumbnail_url?: string;
 }
 
 export interface POI {

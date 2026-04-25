@@ -87,6 +87,95 @@ class FakeBrowser:
         return None
 
 
+class FakeModalButton:
+    def __init__(
+        self,
+        *,
+        text: str,
+        aria_label: str = "",
+        visible: bool = True,
+        on_click=None,
+    ) -> None:
+        self._text = text
+        self._aria_label = aria_label
+        self._visible = visible
+        self._on_click = on_click
+
+    async def is_visible(self) -> bool:
+        return self._visible
+
+    async def inner_text(self) -> str:
+        return self._text
+
+    async def get_attribute(self, name: str) -> str | None:
+        if name == "aria-label":
+            return self._aria_label
+        return None
+
+    async def click(self, timeout: int = 0) -> None:
+        if self._on_click is not None:
+            self._on_click()
+
+
+class FakeModalButtons:
+    def __init__(self, buttons: list[FakeModalButton]) -> None:
+        self._buttons = buttons
+
+    async def count(self) -> int:
+        return len(self._buttons)
+
+    def nth(self, index: int) -> FakeModalButton:
+        return self._buttons[index]
+
+
+class FakeModalContainer:
+    def __init__(self, buttons: list[FakeModalButton]) -> None:
+        self._buttons = buttons
+
+    async def count(self) -> int:
+        return 1 if self._buttons else 0
+
+    @property
+    def last(self) -> "FakeModalContainer":
+        return self
+
+    def locator(self, selector: str):
+        if selector == "button":
+            return FakeModalButtons(self._buttons)
+        raise AssertionError(f"Unexpected nested selector: {selector}")
+
+
+class FakeResultsModalPage:
+    def __init__(self) -> None:
+        self.url = "https://www.trip.com/flights/showfarefirst/?dcity=SIN&acity=SYD"
+        self._buttons = [
+            FakeModalButton(text="", aria_label="close"),
+            FakeModalButton(
+                text="",
+                aria_label="continue",
+                on_click=lambda: setattr(
+                    self,
+                    "url",
+                    "https://www.trip.com/flights/passenger?booking=123",
+                ),
+            ),
+        ]
+
+    async def wait_for_timeout(self, timeout_ms: int) -> None:
+        return None
+
+    def locator(self, selector: str):
+        if selector in {
+            "[role='dialog']",
+            "[aria-modal='true']",
+            "div[class*='modal']",
+            "div[class*='dialog']",
+            "div[class*='drawer']",
+        }:
+            return FakeModalContainer(self._buttons)
+        raise AssertionError(f"Unexpected selector: {selector}")
+
+
 class FakeChromium:
     def __init__(self, page: FakeSearchPage) -> None:
         self.page = page
@@ -257,3 +346,20 @@ def test_checkout_reuses_live_session_page_when_available(monkeypatch) -> None:
     assert fake_browser.closed is False
 
     asyncio.run(live_booking_sessions.close(session.session_id))
+
+
+def test_trip_checkout_advances_results_fare_modal_when_primary_button_has_no_text(monkeypatch) -> None:
+    runner = PlaywrightCheckoutRunner()
+    page = FakeResultsModalPage()
+
+    monkeypatch.setattr(runner, "_handle_cookie_banner", AsyncMock())
+    monkeypatch.setattr(runner, "_wait_for_checkout_start", AsyncMock())
+    monkeypatch.setattr(runner, "_click_first_available", AsyncMock(return_value=False))
+    monkeypatch.setattr(runner, "_trip_handle_baggage", AsyncMock())
+    fill_mock = AsyncMock()
+    monkeypatch.setattr(runner, "_fill_traveler_form", fill_mock)
+
+    asyncio.run(runner._trip_checkout_flow(page, traveler={}, skip_fill=True))
+
+    assert "/flights/passenger" in page.url
+    fill_mock.assert_not_awaited()

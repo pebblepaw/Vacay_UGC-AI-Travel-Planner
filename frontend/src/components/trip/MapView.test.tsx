@@ -4,7 +4,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('mapbox-gl', () => ({
   default: {
-    Map: vi.fn(),
+    Map: vi.fn(() => ({
+      addControl: vi.fn(),
+      on: vi.fn(),
+      remove: vi.fn(),
+      fitBounds: vi.fn(),
+      flyTo: vi.fn(),
+      getZoom: vi.fn(() => 12),
+    })),
     NavigationControl: vi.fn(),
     Marker: vi.fn(),
     Popup: vi.fn(),
@@ -52,6 +59,7 @@ describe('MapView', () => {
 
   it('shows a visible configuration error when the frontend Mapbox token is missing', () => {
     vi.stubEnv('VITE_MAPBOX_PUBLIC', '');
+    vi.stubEnv('MAPBOX_PUBLIC', '');
 
     render(<MapView />);
 

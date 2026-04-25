@@ -1,6 +1,12 @@
 assistant:
   language: English
 
+booking_defaults:
+  flight_origin:
+    name: Singapore Changi Airport
+    airport_code: SIN
+    city_code: SIN
+
 llm:
   provider_preference: auto
   roles:

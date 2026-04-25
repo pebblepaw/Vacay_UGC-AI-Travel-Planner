@@ -11,13 +11,18 @@ TOOLS AVAILABLE:
 - move_poi(poi_id, target_day) — Move between days
 - replan_day(day_number) — Re-sequence a day
 - optimize_trip() — Cross-day optimization
+- resize_trip(target_days) — Repack the itinerary into a new day count
+- add_meal_stop(day_number, meal_type, cuisine_hint) — Insert a restaurant stop
 
 The LLM decides which tool(s) to call based on the plan instruction
 and trip context.
 """
 
+import re
+import uuid
+
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from backend.agent.state import AgentState
 from backend.agent.tools.trip_tools import (
     delete_poi,
@@ -26,9 +31,114 @@ from backend.agent.tools.trip_tools import (
     move_poi,
     replan_day,
     optimize_trip,
+    resize_trip,
+    add_meal_stop,
 )
 from backend.app_config import get_assistant_language_instruction
 from backend.llm import get_agent_llm
+
+
+def _tool_result_summary(instruction: str, messages) -> AIMessage | None:
+    if not messages:
+        return None
+
+    last_message = messages[-1]
+    if not isinstance(last_message, ToolMessage):
+        return None
+
+    content = (last_message.content or "").strip()
+    if not content:
+        return None
+
+    lowered = (instruction or "").lower()
+    if any(keyword in lowered for keyword in ("resize", "shrink", "reduce", "expand", "stretch")):
+        return AIMessage(content=content)
+
+    if any(keyword in lowered for keyword in ("lunch", "dinner", "brunch", "breakfast", "restaurant", "food")):
+        return AIMessage(content=content)
+
+    if "replan" in lowered or "optimize" in lowered:
+        return AIMessage(content=content)
+
+    return None
+
+
+def _deterministic_tool_message(instruction: str, messages) -> AIMessage | None:
+    followup = _tool_result_summary(instruction, messages)
+    if followup is not None:
+        return followup
+
+    lowered = (instruction or "").lower()
+
+    resize_match = re.search(r"\b(?:resize|shrink|reduce|expand|stretch)\b.*?\bto\s+(\d+)\s+days?\b", lowered)
+    if not resize_match:
+        resize_match = re.search(r"\b(\d+)\s*-\s*day\b", lowered)
+    if resize_match:
+        target_days = int(resize_match.group(1))
+        return AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "resize_trip",
+                    "args": {"target_days": target_days},
+                    "id": f"auto_{uuid.uuid4().hex[:10]}",
+                    "type": "tool_call",
+                }
+            ],
+        )
+
+    meal_match = re.search(
+        r"\badd(?:\s+a)?\s+(lunch|dinner|brunch)\b.*?\bday\s+(\d+)\b",
+        lowered,
+    )
+    if meal_match:
+        meal_type = meal_match.group(1)
+        day_number = int(meal_match.group(2))
+        return AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "add_meal_stop",
+                    "args": {
+                        "day_number": day_number,
+                        "meal_type": meal_type,
+                        "cuisine_hint": "",
+                    },
+                    "id": f"auto_{uuid.uuid4().hex[:10]}",
+                    "type": "tool_call",
+                }
+            ],
+        )
+
+    replan_match = re.search(r"\breplan\b.*?\bday\s+(\d+)\b", lowered)
+    if replan_match:
+        day_number = int(replan_match.group(1))
+        return AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "replan_day",
+                    "args": {"day_number": day_number},
+                    "id": f"auto_{uuid.uuid4().hex[:10]}",
+                    "type": "tool_call",
+                }
+            ],
+        )
+
+    if "optimize trip" in lowered or "optimize itinerary" in lowered:
+        return AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "optimize_trip",
+                    "args": {},
+                    "id": f"auto_{uuid.uuid4().hex[:10]}",
+                    "type": "tool_call",
+                }
+            ],
+        )
+
+    return None
 
 def _format_trip_with_ids(trip) -> str:
     """Format trip for LLM context. Same as orchestrator version."""
@@ -61,7 +171,16 @@ def travel_editor_node(state: AgentState) -> dict:
 
     llm = get_agent_llm(role="travel_editor", temperature=0)
 
-    tools = [delete_poi, add_poi, swap_poi, move_poi, replan_day, optimize_trip]
+    tools = [
+        delete_poi,
+        add_poi,
+        swap_poi,
+        move_poi,
+        replan_day,
+        optimize_trip,
+        resize_trip,
+        add_meal_stop,
+    ]
     llm_with_tools = llm.bind_tools(tools)
 
 
@@ -93,6 +212,8 @@ def travel_editor_node(state: AgentState) -> dict:
     GUIDELINES:
     - Use POI IDs from the trip context above (e.g., poi_1, poi_2) when calling delete_poi, swap_poi, or move_poi.
     - After deleting or adding POIs, consider calling replan_day to fix the schedule.
+    - If the user wants fewer or more days, call resize_trip with the requested day count.
+    - If the user wants lunch, dinner, brunch, or restaurants added into the trip, call add_meal_stop for the correct day.
     - For category, use exactly one of: Food, Art, Nature, Culture, Shopping, Nightlife.
     - For priority/intensity, use exactly one of: high, normal, low.
     - When you're done making changes, respond with a summary of what you did. Do NOT call any more tools.
@@ -118,7 +239,7 @@ def travel_editor_node(state: AgentState) -> dict:
     import logging as _logging
     _log = _logging.getLogger(__name__)
     _log.info(f">>> TRAVEL_EDITOR NODE entered, instruction={instruction}, msg_count={len(messages)}")
-    response = llm_with_tools.invoke([system_msg] + list(messages))
+    response = _deterministic_tool_message(instruction, messages) or llm_with_tools.invoke([system_msg] + list(messages))
     has_tools = bool(getattr(response, 'tool_calls', None))
     _log.info(f">>> TRAVEL_EDITOR done, has_tool_calls={has_tools}, tool_names={[tc['name'] for tc in (response.tool_calls or [])]}")
 

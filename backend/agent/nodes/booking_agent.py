@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from langchain_core.messages import AIMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 import logging
 import re
 import uuid
@@ -16,6 +16,21 @@ from backend.agent.tools.booking_tools import (
 from backend.app_config import get_assistant_language_instruction, render_copy
 from backend.llm import get_agent_llm
 from backend.services.booking_intent import normalize_booking_intent
+
+
+def _latest_human_content(messages: list) -> str:
+    for message in reversed(messages):
+        if isinstance(message, HumanMessage):
+            content = getattr(message, "content", "")
+            if content:
+                return str(content)
+    return ""
+
+
+def _user_requested_immediate_booking(text: str) -> bool:
+    lowered = (text or "").lower()
+    return any(token in lowered for token in ("book ", "book a", "book the", "reserve", "checkout"))
+
 
 def _extract_traveler_info(text: str) -> dict[str, str]:
     info: dict[str, str] = {}
@@ -60,15 +75,37 @@ def booking_agent_node(state: AgentState) -> dict:
     selected_offer = dict(state.get("selected_offer") or {})
     booking_result = dict(state.get("booking_result") or {})
     booking_context = state.get("booking_context") or {}
+    latest_human_input = _latest_human_content(messages)
 
     if booking_offers and not selected_offer:
-        match = re.search(r"\boffer_\d+\b", instruction)
+        match = re.search(r"\boffer_\d+\b", instruction) or re.search(r"\boffer_\d+\b", latest_human_input)
         if match:
             auto_select = {
                 "name": "select_booking_option",
                 "args": {
                     "option_id": match.group(0),
                     "notes": "User selected offer id.",
+                },
+                "id": f"auto_{uuid.uuid4().hex[:10]}",
+                "type": "tool_call",
+            }
+            return {
+                "messages": [AIMessage(content="", tool_calls=[auto_select])],
+                "last_agent": "booking_agent",
+            }
+        if _user_requested_immediate_booking(latest_human_input):
+            cheapest_offer = min(
+                booking_offers,
+                key=lambda item: (
+                    float(item.get("price") or 0.0),
+                    str(item.get("title") or item.get("id") or ""),
+                ),
+            )
+            auto_select = {
+                "name": "select_booking_option",
+                "args": {
+                    "option_id": str(cheapest_offer["id"]),
+                    "notes": "Auto-selected the cheapest offer because the user asked to book now.",
                 },
                 "id": f"auto_{uuid.uuid4().hex[:10]}",
                 "type": "tool_call",

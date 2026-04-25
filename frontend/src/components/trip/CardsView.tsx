@@ -44,10 +44,13 @@ const toEmbed = (url: string) => {
   return null;
 };
 
-const canRenderVideoTag = (url: string, platform: string) => {
-  if (platform === 'instagram' || platform === 'tiktok') return false;
-  return /\.(mp4|webm|ogg)(\?|$)/i.test(url);
+export const canRenderVideoTag = (url: string, platform: string) => {
+  if (/\.(mp4|webm|ogg)(\?|$)/i.test(url)) return true;
+  if (platform === 'instagram' || platform === 'tiktok' || platform === 'douyin' || platform === 'rednote') return false;
+  return false;
 };
+
+export const canRenderImageTag = (url: string) => /\.(png|jpe?g|gif|webp|avif)(\?|$)/i.test(url);
 
 export const CardsView = () => {
   const { trip, selectedPOI, setSelectedPOI, mediaByPlace } = useTripContext();
@@ -157,9 +160,16 @@ export const CardsView = () => {
                               <video className="w-full h-20 rounded object-cover" autoPlay muted loop playsInline>
                                 <source src={item.url} />
                               </video>
+                            ) : canRenderImageTag(item.url) ? (
+                              <img
+                                src={item.url}
+                                alt={item.title}
+                                className="w-full h-20 rounded object-cover"
+                                loading="lazy"
+                              />
                             ) : (
                               <a
-                                href={item.url}
+                                href={item.source_url || item.url}
                                 target="_blank"
                                 rel="noreferrer"
                                 className="w-full h-20 rounded border bg-muted/50 flex items-center justify-center text-center px-2"

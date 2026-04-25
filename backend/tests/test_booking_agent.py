@@ -111,6 +111,103 @@ def test_normalize_booking_intent_handles_natural_language_round_trip() -> None:
     assert intent.can_search is True
 
 
+def test_normalize_booking_intent_uses_configured_default_origin_when_user_omits_it(monkeypatch) -> None:
+    llm = FakeIntentLLM(
+        {
+            "booking_type": "flight",
+            "provider_hint": "trip.com",
+            "origin": "",
+            "origin_code": "",
+            "origin_city_code": "",
+            "destination": "Sydney",
+            "destination_code": "SYD",
+            "destination_city_code": "SYD",
+            "departure_date": "2026-05-02",
+            "return_date": "2026-05-04",
+            "trip_type": "round_trip",
+            "adults": 2,
+            "cabin": "economy",
+            "budget_limit": 0,
+            "origin_source": "missing",
+            "destination_source": "user",
+            "departure_date_source": "user",
+            "trip_type_source": "user",
+            "adults_source": "user",
+            "missing_fields": [],
+            "can_search": True,
+            "follow_up_question": "",
+        }
+    )
+    monkeypatch.setattr(
+        "backend.services.booking_intent.get_default_flight_origin",
+        lambda: {
+            "name": "Singapore Changi Airport",
+            "airport_code": "SIN",
+            "city_code": "SIN",
+        },
+    )
+
+    intent = normalize_booking_intent(
+        message="Book a flight to Sydney for 2 pax, on the weekend of 2nd to 4th May.",
+        trip=make_trip(),
+        llm=llm,
+    )
+
+    assert intent.origin == "Singapore Changi Airport"
+    assert intent.origin_code == "SIN"
+    assert intent.origin_city_code == "SIN"
+    assert intent.origin_source == "inference"
+    assert intent.can_search is True
+
+
+def test_normalize_booking_intent_clears_stale_missing_fields_after_default_origin(monkeypatch) -> None:
+    llm = FakeIntentLLM(
+        {
+            "booking_type": "flight",
+            "provider_hint": "trip.com",
+            "origin": "",
+            "origin_code": "",
+            "origin_city_code": "",
+            "destination": "Sydney",
+            "destination_code": "SYD",
+            "destination_city_code": "SYD",
+            "departure_date": "2026-05-02",
+            "return_date": "2026-05-04",
+            "trip_type": "round_trip",
+            "adults": 2,
+            "cabin": "economy",
+            "budget_limit": 0,
+            "origin_source": "missing",
+            "destination_source": "user",
+            "departure_date_source": "user",
+            "trip_type_source": "inference",
+            "adults_source": "user",
+            "missing_fields": ["origin", "trip type"],
+            "can_search": False,
+            "follow_up_question": "Where would you like to fly from?",
+        }
+    )
+    monkeypatch.setattr(
+        "backend.services.booking_intent.get_default_flight_origin",
+        lambda: {
+            "name": "Singapore Changi Airport",
+            "airport_code": "SIN",
+            "city_code": "SIN",
+        },
+    )
+
+    intent = normalize_booking_intent(
+        message="Book a flight to Sydney for 2 pax, on the weekend of 2nd to 4th May.",
+        trip=make_trip(),
+        llm=llm,
+    )
+
+    assert intent.origin == "Singapore Changi Airport"
+    assert intent.trip_type == "round_trip"
+    assert intent.missing_fields == []
+    assert intent.can_search is True
+
+
 def test_booking_agent_uses_normalized_intent_for_tool_call(monkeypatch) -> None:
     monkeypatch.setattr(
         booking_agent_module,
@@ -329,3 +426,26 @@ def test_booking_agent_opens_checkout_in_visible_browser_after_selection() -> No
 
     assert tool_call["name"] == "proceed_checkout"
     assert tool_call["args"]["headless"] is False
+
+
+def test_booking_agent_auto_selects_cheapest_offer_for_book_intent() -> None:
+    state = {
+        "messages": [HumanMessage(content="Book a flight to Sydney for 2 pax, on the weekend of 2nd to 4th May")],
+        "trip": make_trip(),
+        "plan": [],
+        "current_step": 0,
+        "critique": "",
+        "booking_context": {"provider_hint": "trip.com"},
+        "booking_offers": [
+            {"id": "offer_2", "title": "Late flight", "price": 320.0, "currency": "USD"},
+            {"id": "offer_1", "title": "Early flight", "price": 199.0, "currency": "USD"},
+        ],
+        "selected_offer": {},
+        "booking_result": {},
+    }
+
+    result = booking_agent_module.booking_agent_node(state)
+    tool_call = result["messages"][0].tool_calls[0]
+
+    assert tool_call["name"] == "select_booking_option"
+    assert tool_call["args"]["option_id"] == "offer_1"

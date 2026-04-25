@@ -33,7 +33,7 @@ class GeminiAnalyzerService:
         )
 
         self.analysis_prompt = """
-Analyze this video and extract travel-related information. Focus on:
+Analyze this travel media post and extract travel-related information. The input may be a video clip or an image post. Focus on:
 
 1. **Locations**: Extract specific places mentioned or shown (restaurants, landmarks, neighborhoods, etc.)
    For each location provide:
@@ -91,7 +91,7 @@ If the video is not travel-related, return: {"city": null, "country": null, "sco
             file_name = getattr(file_obj, "name", None)
             if not file_name:
                 return file_obj
-            file_obj = self.client.files.get(name=file_name)
+            file_obj = await asyncio.to_thread(self.client.files.get, name=file_name)
             state_name = self._file_state_name(file_obj)
 
         if state_name == "FAILED":
@@ -128,8 +128,13 @@ If the video is not travel-related, return: {"city": null, "country": null, "sco
 
         return data
 
-    async def analyze_video(self, video_path: str, video_title: str = "") -> GeminiAnalysisResult:
-        """Analyze one downloaded video file with Gemini."""
+    async def analyze_video(
+        self,
+        video_path: str,
+        video_title: str = "",
+        caption_text: str = "",
+    ) -> GeminiAnalysisResult:
+        """Analyze one downloaded media file with Gemini."""
 
         uploaded_file: Any = None
         try:
@@ -137,15 +142,18 @@ If the video is not travel-related, return: {"city": null, "country": null, "sco
                 raise FileNotFoundError(f"Video file not found: {video_path}")
 
             logger.info("Uploading video to Gemini: %s", video_path)
-            uploaded_file = self.client.files.upload(file=video_path)
+            uploaded_file = await asyncio.to_thread(self.client.files.upload, file=video_path)
             uploaded_file = await self._wait_for_uploaded_file(uploaded_file)
 
             full_prompt = self.analysis_prompt
             if video_title:
                 full_prompt = f"Video title: '{video_title}'\n\n{full_prompt}"
+            if caption_text:
+                full_prompt = f"{full_prompt}\n\nCaption text: '{caption_text}'"
 
             logger.info("Analyzing video with Gemini...")
-            response = self.client.models.generate_content(
+            response = await asyncio.to_thread(
+                self.client.models.generate_content,
                 model=self.model_name,
                 contents=[full_prompt, uploaded_file],
                 config=self.generation_config,
@@ -175,6 +183,7 @@ If the video is not travel-related, return: {"city": null, "country": null, "sco
                     "confidence": data.get("confidence", "low"),
                     "scope_confidence": data.get("scope_confidence", data.get("confidence", "low")),
                     "video_title": video_title,
+                    "caption_text": caption_text,
                 },
             )
 
@@ -190,7 +199,7 @@ If the video is not travel-related, return: {"city": null, "country": null, "sco
             file_name = getattr(uploaded_file, "name", None)
             if file_name:
                 try:
-                    self.client.files.delete(name=file_name)
+                    await asyncio.to_thread(self.client.files.delete, name=file_name)
                 except Exception:
                     logger.debug("Failed to delete Gemini upload %s", file_name, exc_info=True)
 
@@ -198,17 +207,22 @@ If the video is not travel-related, return: {"city": null, "country": null, "sco
         self,
         video_data: list[dict],
     ) -> list[GeminiAnalysisResult]:
-        """Analyze multiple downloaded videos serially."""
+        """Analyze multiple downloaded videos with bounded concurrency."""
 
-        results = []
-        for data in video_data:
-            result = await self.analyze_video(
-                data.get("file_path"),
-                data.get("title", ""),
-            )
-            results.append(result)
+        if not video_data:
+            return []
 
-        return results
+        semaphore = asyncio.Semaphore(2)
+
+        async def _analyze_one(data: dict) -> GeminiAnalysisResult:
+            async with semaphore:
+                return await self.analyze_video(
+                    data.get("file_path"),
+                    data.get("title", ""),
+                    data.get("caption", ""),
+                )
+
+        return await asyncio.gather(*[_analyze_one(data) for data in video_data])
 
 
 gemini_analyzer = GeminiAnalyzerService()

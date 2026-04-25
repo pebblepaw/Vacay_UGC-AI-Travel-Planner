@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 VENV_DIR="${VENV_DIR:-$ROOT_DIR/venv}"
+ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
 
 cd "$ROOT_DIR"
 
@@ -14,11 +15,22 @@ fi
 
 source "$VENV_DIR/bin/activate"
 
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  source "$ENV_FILE"
+  set +a
+fi
+
 echo "[codex verify] backend tests"
 pytest -q \
   backend/tests/test_video_processing.py \
   backend/tests/test_response_formatter.py \
-  backend/tests/test_booking_agent.py
+  backend/tests/test_booking_agent.py \
+  backend/tests/test_workspace_plumbing.py \
+  backend/tests/test_workspace_runtime.py \
+  backend/tests/test_itinerary_builder.py \
+  backend/tests/test_itinerary_media_mapping.py \
+  backend/tests/test_supabase_storage_config.py
 
 echo "[codex verify] frontend tests"
 pushd frontend >/dev/null

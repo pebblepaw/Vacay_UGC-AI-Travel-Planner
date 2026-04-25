@@ -337,9 +337,11 @@ class PlaywrightCheckoutRunner:
             ],
         )
         await page.wait_for_timeout(1200)
+        await self._trip_handle_results_fare_modal(page)
 
         # Step 1.5: handle baggage selection if present.
         await self._trip_handle_baggage(page)
+        await self._trip_handle_results_fare_modal(page)
 
         # Step 2: fill traveler/contact details.
         if skip_fill:
@@ -360,6 +362,80 @@ class PlaywrightCheckoutRunner:
             ],
         )
         await page.wait_for_timeout(1500)
+
+    async def _trip_handle_results_fare_modal(self, page: Any) -> bool:
+        """Advance through Trip.com fare-selection dialogs shown on results pages."""
+        if not self._is_results_page(page.url):
+            return False
+
+        await page.wait_for_timeout(1000)
+
+        clicked_named_cta = await self._click_first_available(
+            page,
+            [
+                ("css", "[role='dialog'] button:has-text('Continue')"),
+                ("css", "[role='dialog'] button:has-text('Book')"),
+                ("css", "[role='dialog'] button:has-text('Select')"),
+                ("css", "[role='dialog'] button:has-text('Choose')"),
+                ("css", "[role='dialog'] button:has-text('Confirm')"),
+                ("css", "[role='dialog'] button:has-text('Next')"),
+                ("css", "[role='dialog'] button:has-text('Reserve')"),
+                ("css", "[role='dialog'] button:has-text('立即预订')"),
+                ("css", "[role='dialog'] button:has-text('预订')"),
+                ("css", "[role='dialog'] button:has-text('下一步')"),
+                ("css", "[role='dialog'] button:has-text('继续')"),
+                ("css", "[role='dialog'] button[class*='primary']"),
+                ("css", "[aria-modal='true'] button[class*='primary']"),
+                ("css", "div[class*='modal'] button[class*='primary']"),
+                ("css", "div[class*='dialog'] button[class*='primary']"),
+            ],
+        )
+        if clicked_named_cta:
+            await self._wait_for_checkout_start(page)
+            return not self._is_results_page(page.url)
+
+        modal_selectors = [
+            "[role='dialog']",
+            "[aria-modal='true']",
+            "div[class*='modal']",
+            "div[class*='dialog']",
+            "div[class*='drawer']",
+        ]
+        for selector in modal_selectors:
+            try:
+                modal = page.locator(selector)
+                if await modal.count() <= 0:
+                    continue
+                buttons = modal.last.locator("button")
+                count = await buttons.count()
+                if count <= 0:
+                    continue
+                for index in range(count - 1, -1, -1):
+                    button = buttons.nth(index)
+                    try:
+                        if not await button.is_visible():
+                            continue
+                    except Exception:
+                        continue
+
+                    try:
+                        label = ((await button.inner_text()) or "").strip().lower()
+                    except Exception:
+                        label = ""
+                    try:
+                        aria_label = ((await button.get_attribute("aria-label")) or "").strip().lower()
+                    except Exception:
+                        aria_label = ""
+
+                    if label in {"x", "close", "cancel"} or aria_label in {"close", "cancel"}:
+                        continue
+
+                    await button.click(timeout=2200)
+                    await self._wait_for_checkout_start(page)
+                    return not self._is_results_page(page.url)
+            except Exception:
+                continue
+        return False
 
     async def _handle_cookie_banner(self, page: Any) -> None:
         """Best-effort cookie banner dismissal for common provider pages."""

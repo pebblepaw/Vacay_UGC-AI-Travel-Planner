@@ -34,6 +34,8 @@ class SourceVideo(BaseModel):
     platform: Literal['tiktok', 'douyin', 'youtube', 'rednote', 'instagram']
     url: str
     title: str
+    preview_url: Optional[str] = None
+    thumbnail_url: Optional[str] = None
 
 
 class POI(BaseModel):

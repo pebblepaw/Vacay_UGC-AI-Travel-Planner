@@ -6,11 +6,13 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import logging
 
 from backend.config import settings
 from backend.routers import videos, trips, chat
 from backend.routers import workspaces, telegram
+from backend.agent.graph import close_graph_checkpointer, configure_graph_checkpointer
 from backend.storage.supabase_storage import supabase_storage
 
 # Configure logging
@@ -65,6 +67,7 @@ app.include_router(trips.router)
 app.include_router(chat.router)
 app.include_router(workspaces.router)
 app.include_router(telegram.router)
+app.mount("/media", StaticFiles(directory=str(settings.DOWNLOADS_DIR)), name="media")
 
 
 @app.on_event("startup")
@@ -72,8 +75,15 @@ async def startup_event():
     """Seed placeholder trip if the database is empty."""
     logger.info("VACAY workspace: %s", WORKSPACE_PATH)
     logger.info("VACAY config: %s", CONFIG_PATH)
+    logger.info("Configuring LangGraph checkpoint storage...")
+    configure_graph_checkpointer()
     logger.info("Checking Supabase for existing trips...")
     await supabase_storage.seed_placeholder_if_empty()
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    close_graph_checkpointer()
 
 
 @app.get("/")

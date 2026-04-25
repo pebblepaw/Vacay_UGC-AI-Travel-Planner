@@ -34,7 +34,7 @@ export interface ChatResponse {
 export interface WorkspaceSnapshotResponse {
   workspace_id: string;
   trip: any;
-  media_by_place: Record<string, Array<{ title: string; url: string; platform: string; autoplay: boolean }>>;
+  media_by_place: Record<string, Array<{ title: string; url: string; source_url?: string; platform: string; autoplay: boolean }>>;
   runtime_state: Record<string, unknown>;
   workspace_memory: Record<string, unknown>;
   recent_events: Array<Record<string, unknown>>;
@@ -162,6 +162,15 @@ export async function getWorkspaceSnapshot(
     throw new Error(error.detail || 'Failed to fetch workspace snapshot');
   }
   return response.json();
+}
+
+export function getWorkspaceEventsWebSocketUrl(workspaceId: string, token?: string): string {
+  const base = (API_BASE_URL || window.location.origin)
+    .replace(/^http:\/\//i, 'ws://')
+    .replace(/^https:\/\//i, 'wss://')
+    .replace(/\/$/, '');
+  const qp = token ? `?token=${encodeURIComponent(token)}` : '';
+  return `${base}/api/workspaces/${encodeURIComponent(workspaceId)}/events/ws${qp}`;
 }
 
 export async function createWorkspaceShareLink(workspaceId: string) {

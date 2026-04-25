@@ -17,7 +17,10 @@ logger = logging.getLogger(__name__)
 class TavilyLocationService:
     """Service for geocoding and enriching location data using Tavily."""
 
-    _LOCATION_TIMEOUT_SECONDS = 20.0
+    _LOCATION_TIMEOUT_SECONDS = 8.0
+    _MAPBOX_TIMEOUT_SECONDS = 3.0
+    _NOMINATIM_TIMEOUT_SECONDS = 4.0
+    _TAVILY_SEARCH_TIMEOUT_SECONDS = 10.0
     _MAX_TAVILY_CANDIDATES = 5
     _MAX_CANDIDATE_LENGTH = 120
     _COUNTRY_HINTS = {
@@ -108,6 +111,38 @@ class TavilyLocationService:
         "hours:",
         "menu:",
     )
+    _QUERY_STOP_WORDS = {
+        "the",
+        "a",
+        "an",
+        "and",
+        "of",
+        "in",
+        "at",
+        "to",
+        "for",
+        "sydney",
+        "australia",
+    }
+    _GENERIC_LOCATION_TOKENS = {
+        "beach",
+        "bay",
+        "park",
+        "market",
+        "pier",
+        "wharf",
+        "harbour",
+        "harbor",
+        "district",
+        "neighbourhood",
+        "neighborhood",
+        "walk",
+        "bridge",
+        "mount",
+        "mt",
+        "hill",
+        "point",
+    }
     
     def __init__(self):
         self.api_key = settings.TAVLY_API
@@ -121,6 +156,7 @@ class TavilyLocationService:
         place_name: str,
         city: Optional[str] = None,
         scope: Optional[dict] = None,
+        timeout_seconds: Optional[float] = None,
     ) -> Optional[dict]:
         """
         Get coordinates and details for a place.
@@ -137,14 +173,15 @@ class TavilyLocationService:
                 - img: Image URL (if available)
             or None if not found
         """
+        timeout_value = timeout_seconds or self._LOCATION_TIMEOUT_SECONDS
         try:
-            async with asyncio.timeout(self._LOCATION_TIMEOUT_SECONDS):
+            async with asyncio.timeout(timeout_value):
                 return await self._geocode_location_with_strategies(place_name, city, scope)
         except TimeoutError:
             logger.warning(
                 "Geocoding timed out for %s after %.1f seconds",
                 place_name,
-                self._LOCATION_TIMEOUT_SECONDS,
+                timeout_value,
             )
             return None
         except Exception as e:
@@ -158,6 +195,12 @@ class TavilyLocationService:
         scope: Optional[dict] = None,
     ) -> Optional[dict]:
         query_hint = self._scope_query_hint(city, scope)
+
+        if query_hint:
+            scoped_query = f"{place_name}, {query_hint}"
+            result = await self._geocode_with_mapbox(scoped_query, query_hint)
+            if self._accept_result(result, scope) and self._result_matches_query(result, place_name):
+                return result
 
         if query_hint:
             result = await self._geocode_with_nominatim_structured(place_name, query_hint)
@@ -189,6 +232,45 @@ class TavilyLocationService:
 
         logger.warning(f"All geocoding strategies failed for: {place_name}")
         return None
+
+    def _result_matches_query(self, result: Optional[dict], place_name: str) -> bool:
+        if not result:
+            return False
+
+        query_tokens = self._query_tokens(place_name)
+        if not query_tokens:
+            return True
+
+        result_text = " ".join(
+            str(result.get(part) or "")
+            for part in ("full_name", "address", "locality", "region")
+        )
+        normalized_result = self._normalize_scope_text(result_text)
+
+        if self._normalize_scope_text(place_name) in normalized_result:
+            return True
+
+        overlap = [token for token in query_tokens if token in normalized_result]
+        if len(query_tokens) == 1:
+            return bool(overlap)
+
+        if len(overlap) >= min(2, len(query_tokens)):
+            return True
+
+        generic_overlap = [token for token in overlap if token in self._GENERIC_LOCATION_TOKENS]
+        non_generic_overlap = [token for token in overlap if token not in self._GENERIC_LOCATION_TOKENS]
+        if generic_overlap and non_generic_overlap:
+            return True
+
+        return False
+
+    def _query_tokens(self, value: str) -> list[str]:
+        tokens = [
+            token
+            for token in re.findall(r"[a-z0-9]+", (value or "").lower())
+            if len(token) > 2 and token not in self._QUERY_STOP_WORDS
+        ]
+        return list(dict.fromkeys(tokens))
     
     async def _geocode_with_nominatim(
         self,
@@ -215,7 +297,7 @@ class TavilyLocationService:
                     headers={
                         "User-Agent": "VACAY-Travel-Planner/1.0"
                     },
-                    timeout=10.0
+                    timeout=self._NOMINATIM_TIMEOUT_SECONDS,
                 )
                 
                 if response.status_code != 200:
@@ -249,7 +331,7 @@ class TavilyLocationService:
                 }
                 
         except Exception as e:
-            logger.error(f"Nominatim geocoding error: {e}")
+            logger.error("Nominatim geocoding error: %r", e)
             return None
     
     async def _geocode_with_nominatim_structured(
@@ -268,7 +350,7 @@ class TavilyLocationService:
                 # Build structured params – put the place_name in 'q'
                 # and any city/region/country hint in 'countrycodes' or 'viewbox'
                 params: dict = {
-                    "q": place_name,
+                    "q": f"{place_name}, {city}" if city else place_name,
                     "format": "json",
                     "limit": 3,
                     "addressdetails": 1,
@@ -283,7 +365,7 @@ class TavilyLocationService:
                     self.nominatim_url,
                     params=params,
                     headers={"User-Agent": "VACAY-Travel-Planner/1.0"},
-                    timeout=10.0,
+                    timeout=self._NOMINATIM_TIMEOUT_SECONDS,
                 )
 
                 if response.status_code != 200:
@@ -315,7 +397,7 @@ class TavilyLocationService:
                 }
 
         except Exception as e:
-            logger.error(f"Nominatim structured geocoding error: {e}")
+            logger.error("Nominatim structured geocoding error: %r", e)
             return None
 
     def _country_code_from_hint(self, city: Optional[str]) -> Optional[str]:
@@ -472,7 +554,7 @@ class TavilyLocationService:
         query += " address"
 
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=self._TAVILY_SEARCH_TIMEOUT_SECONDS) as client:
                 response = await client.post(
                     f"{self.base_url}/search",
                     json={
@@ -519,7 +601,7 @@ class TavilyLocationService:
             return None
 
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=self._MAPBOX_TIMEOUT_SECONDS) as client:
                 params: dict[str, str | int] = {
                     "access_token": access_token,
                     "limit": 1,
@@ -582,7 +664,7 @@ class TavilyLocationService:
             }
 
         except Exception as e:
-            logger.warning(f"Mapbox geocoding failed for '{query}': {e}")
+            logger.warning("Mapbox geocoding failed for '%s': %r", query, e)
             return None
     
     async def get_place_image(self, place_name: str, city: Optional[str] = None) -> Optional[str]:

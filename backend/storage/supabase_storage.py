@@ -93,9 +93,12 @@ class SupabaseStorageService:
         if self._client is None:
             self._client = create_client(
                 settings.SUPABASE_PROJECT_URL,
-                settings.SUPABASE_SECRET_KEY,
+                self._resolve_api_key(),
             )
         return self._client
+
+    def _resolve_api_key(self) -> str:
+        return settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_SECRET_KEY
 
     # ── CRUD operations ──────────────────────────────────────────
 

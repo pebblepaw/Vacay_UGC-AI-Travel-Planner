@@ -133,6 +133,34 @@ def optimize_trip() -> str:
     """
     return "optimize_trip called"
 
+
+@tool
+def resize_trip(target_days: int) -> str:
+    """Compress or expand the trip into a target number of days.
+
+    Use this when the user says things like "shrink it to 2 days",
+    "make it fit in 3 days", or "spread this across 4 days".
+
+    Args:
+        target_days: Final number of itinerary days to keep.
+    """
+    return f"resize_trip called for {target_days} days"
+
+
+@tool
+def add_meal_stop(day_number: int, meal_type: str, cuisine_hint: str = "") -> str:
+    """Find and insert a restaurant stop into a specific day.
+
+    Use this when the user asks for lunch, dinner, brunch, or another meal
+    to be added into the itinerary near the relevant part of the day.
+
+    Args:
+        day_number: Which day to update.
+        meal_type: Meal type such as lunch or dinner.
+        cuisine_hint: Optional cuisine or vibe hint from the user.
+    """
+    return f"add_meal_stop called for Day {day_number} ({meal_type})"
+
 # @tool
 # def optimize_route(trip_data: dict) -> dict: 
 #     ''' Re-orders stops in the trip to minimize travel distance. 

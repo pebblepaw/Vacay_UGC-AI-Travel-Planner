@@ -18,9 +18,19 @@ KEY DESIGN DECISIONS:
 4. Plan continuation in formatter — multi-step plan-and-execute
 5. Human-in-the-loop via interrupt_before
 """
+from __future__ import annotations
+
+from contextlib import AbstractContextManager
+import logging
+import signal
+from typing import Any
 
 from langgraph.graph import StateGraph, END
+from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.prebuilt import ToolNode, tools_condition
+
+from backend.config import settings
+from backend.services.langgraph_supabase_checkpointer import SupabaseWorkspaceCheckpointer
 from backend.agent.state import AgentState
 
 # ── Import all nodes ──
@@ -40,6 +50,7 @@ from backend.agent.tools.trip_tools import search_places
 
 # ── Standard ToolNode for search (only search_places) ──
 search_tool_node = ToolNode([search_places])
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -209,5 +220,93 @@ workflow.add_conditional_edges(
 workflow.add_edge("chitchat", END)
 workflow.add_edge("human_review", END)
 
-# ── Compile with human-in-the-loop interrupt ──
-app = workflow.compile(interrupt_before=["human_review"])
+def _compile_graph(checkpointer: PostgresSaver | None = None) -> Any:
+    return workflow.compile(interrupt_before=["human_review"], checkpointer=checkpointer)
+
+
+_compiled_app: Any = _compile_graph()
+_checkpointer_context: AbstractContextManager[PostgresSaver] | None = None
+
+
+def get_graph_app() -> Any:
+    return _compiled_app
+
+
+def _normalize_checkpoint_url(checkpoint_url: str) -> str:
+    separator = "&" if "?" in checkpoint_url else "?"
+    normalized = checkpoint_url
+    if "sslmode=" not in checkpoint_url:
+        normalized = f"{normalized}{separator}sslmode=require"
+        separator = "&"
+    if "connect_timeout=" not in normalized:
+        normalized = f"{normalized}{separator}connect_timeout=5"
+    return normalized
+
+
+def configure_graph_checkpointer(conn_string: str | None = None) -> bool:
+    global _compiled_app, _checkpointer_context
+
+    close_graph_checkpointer()
+    checkpoint_url = conn_string or settings.LANGGRAPH_CHECKPOINT_URL
+    if not checkpoint_url:
+        _compiled_app = _compile_graph()
+        return False
+
+    try:
+        checkpoint_url = _normalize_checkpoint_url(checkpoint_url)
+
+        def _raise_timeout(signum, frame):
+            raise TimeoutError("Timed out while connecting LangGraph Postgres checkpointer")
+
+        previous_handler = signal.getsignal(signal.SIGALRM)
+        signal.signal(signal.SIGALRM, _raise_timeout)
+        signal.setitimer(signal.ITIMER_REAL, 10)
+        try:
+            context = PostgresSaver.from_conn_string(checkpoint_url)
+            saver = context.__enter__()
+            saver.setup()
+            _checkpointer_context = context
+            _compiled_app = _compile_graph(checkpointer=saver)
+            logger.info("Configured LangGraph Postgres checkpointer")
+            return True
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, previous_handler)
+    except Exception as exc:
+        logger.warning("LangGraph Postgres checkpointer unavailable: %s", exc)
+
+    try:
+        saver = SupabaseWorkspaceCheckpointer()
+        _checkpointer_context = saver
+        _compiled_app = _compile_graph(checkpointer=saver)
+        logger.info("Configured LangGraph Supabase REST checkpointer")
+        return True
+    except Exception as exc:
+        logger.warning("LangGraph durable checkpointer unavailable, falling back to stateless graph: %s", exc)
+        close_graph_checkpointer()
+        _compiled_app = _compile_graph()
+        return False
+
+
+def close_graph_checkpointer() -> None:
+    global _checkpointer_context
+    if _checkpointer_context is None:
+        return
+    try:
+        _checkpointer_context.__exit__(None, None, None)
+    finally:
+        _checkpointer_context = None
+
+
+class GraphAppProxy:
+    async def ainvoke(self, *args, **kwargs):
+        return await get_graph_app().ainvoke(*args, **kwargs)
+
+    def invoke(self, *args, **kwargs):
+        return get_graph_app().invoke(*args, **kwargs)
+
+    def __getattr__(self, item):
+        return getattr(get_graph_app(), item)
+
+
+app = GraphAppProxy()

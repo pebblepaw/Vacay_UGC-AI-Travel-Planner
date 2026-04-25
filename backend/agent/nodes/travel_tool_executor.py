@@ -20,12 +20,15 @@ import uuid
 import logging
 import httpx
 import asyncio
+import textwrap
+from datetime import datetime, timedelta
 from math import radians, cos, sin, asin, sqrt
 # from backend.agent.tools.trip_tools import haversine_km
 from langchain_core.messages import ToolMessage
 from backend.models.schemas import Trip, POI, Day
 from backend.agent.state import AgentState
 from duckduckgo_search import DDGS
+from backend.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +60,25 @@ DAY_START_MINUTES = 9 * 60
 DAY_END_MINUTES = (23 * 60) + 59
 LUNCH_WINDOW = (11 * 60 + 30, 14 * 60 + 30)
 DINNER_WINDOW = (18 * 60, 22 * 60)
+MAX_CLUSTER_POIS_PER_DAY = 4
+MAX_CLUSTER_MOVE_KM = 25.0
+OVERPASS_INTERPRETER_URL = "https://overpass.kumi.systems/api/interpreter"
+GENERIC_PLACE_RESULT_TOKENS = (
+    "best ",
+    "top ",
+    "restaurants near",
+    "lunch restaurants",
+    "dinner restaurants",
+    "tripadvisor",
+    "opentable",
+    "updated ",
+    "guide",
+    "spots for",
+    "search restaurants",
+    "restaurants &",
+    "foodies",
+    "yelp",
+)
 
 def _fetch_image(place_name: str) -> str:
     """Fetch a real image for a place using DuckDuckGo image search.
@@ -128,6 +150,52 @@ def _meal_anchor_window(poi: POI) -> tuple[int, int] | None:
     if DINNER_WINDOW[0] <= start <= DINNER_WINDOW[1]:
         return DINNER_WINDOW
     return None
+
+
+def _meal_anchor_priority(poi: POI) -> int:
+    meal_window = _meal_anchor_window(poi)
+    if meal_window == LUNCH_WINDOW:
+        return 0
+    if meal_window == DINNER_WINDOW:
+        return 1
+    return 2
+
+
+def _sort_pois_by_start_time(pois: list[POI]) -> list[POI]:
+    return sorted(
+        pois,
+        key=lambda poi: (
+            (_parse_time_slot(poi.time_slot or "") or (99 * 60, 99 * 60))[0],
+            poi.name.lower(),
+        ),
+    )
+
+
+def _time_preference_for_poi(poi: POI) -> int:
+    meal_window = _meal_anchor_window(poi)
+    if meal_window == LUNCH_WINDOW:
+        return 1
+    if meal_window == DINNER_WINDOW:
+        return 3
+
+    parsed = _parse_time_slot(poi.time_slot or "")
+    if parsed:
+        start, _end = parsed
+        if start < 11 * 60:
+            return 0
+        if start < 14 * 60:
+            return 1
+        if start < 17 * 60:
+            return 2
+        return 3
+
+    time_pref = CATEGORY_TIME_PREFERENCE.get(poi.category, 2)
+    if poi.category == "Food" and any(
+        kw in poi.vibe.lower()
+        for kw in ["night", "dinner", "bar", "late"]
+    ):
+        time_pref = 3
+    return time_pref
 
 
 def _estimate_transit_minutes(current: POI, next_poi: POI) -> tuple[str, int]:
@@ -204,6 +272,17 @@ def travel_tool_executor(state: AgentState) -> dict:
 
             elif name == "optimize_trip":
                 updated_trip, msg = _execute_optimize_trip(updated_trip)
+
+            elif name == "resize_trip":
+                updated_trip, msg = _execute_resize_trip(updated_trip, args["target_days"])
+
+            elif name == "add_meal_stop":
+                updated_trip, msg = _execute_add_meal_stop(
+                    updated_trip,
+                    args["day_number"],
+                    args["meal_type"],
+                    args.get("cuisine_hint", ""),
+                )
 
             else:
                 msg = f"Unknown tool: {name}"
@@ -395,15 +474,7 @@ def _execute_replan_day(trip: Trip, day_number: int) -> tuple[Trip, str]:
     # ── Step 1: Bucket POIs by time preference ──
     buckets: dict[int, list[POI]] = {0: [], 1: [], 2: [], 3: []}
     for poi in pois:
-        time_pref = CATEGORY_TIME_PREFERENCE.get(poi.category, 2)
-
-        # Special case: Food POIs with evening-ish vibes → evening bucket
-        if poi.category == "Food" and any(
-            kw in poi.vibe.lower()
-            for kw in ["night", "dinner", "bar", "late"]
-        ):
-            time_pref = 3
-
+        time_pref = _time_preference_for_poi(poi)
         buckets[time_pref].append(poi)
 
     # ── Step 2: Within each bucket, sort by proximity (nearest-neighbor) ──
@@ -413,7 +484,11 @@ def _execute_replan_day(trip: Trip, day_number: int) -> tuple[Trip, str]:
         if not block_pois:
             continue
 
-        if not ordered:
+        anchor_seed = min(block_pois, key=lambda poi: (_meal_anchor_priority(poi), poi.name.lower()))
+        if _meal_anchor_priority(anchor_seed) < 2:
+            ordered.append(anchor_seed)
+            remaining = [poi for poi in block_pois if poi.id != anchor_seed.id]
+        elif not ordered:
             # First block: start with the first POI (arbitrary seed)
             ordered.append(block_pois[0])
             remaining = block_pois[1:]
@@ -476,9 +551,9 @@ def _execute_replan_day(trip: Trip, day_number: int) -> tuple[Trip, str]:
         poi.time_slot = f"{_format_minutes(start_minutes)} - {_format_minutes(end_minutes)}"
         poi.travel_time = travel_segments[idx][0] if idx < len(travel_segments) else None
 
-    target_day.pois = ordered
+    target_day.pois = _sort_pois_by_start_time(ordered)
 
-    names = [p.name for p in ordered]
+    names = [p.name for p in target_day.pois]
     return trip, f"Replanned Day {day_number}: {' → '.join(names)}"
 
 
@@ -542,6 +617,468 @@ def _execute_optimize_trip(trip: Trip) -> tuple[Trip, str]:
 
     return trip, f"Optimized trip across {len(trip.days)} days. POIs reassigned by geography and replanned."
 
+
+def _pick_drop_candidate(pois: list[POI]) -> POI | None:
+    if not pois:
+        return None
+
+    priority_score = {"low": 0, "normal": 1, "high": 2}
+    protected_food = {"12:00", "12:30", "19:00", "19:30"}
+
+    return min(
+        pois,
+        key=lambda poi: (
+            1 if poi.category == "Food" and any(token in poi.time_slot for token in protected_food) else 0,
+            priority_score.get(poi.priority, 1),
+            poi.visit_duration,
+            poi.name.lower(),
+        ),
+    )
+
+
+def _sync_geocode_nominatim(place_name: str, context_query: str = "") -> list[float] | None:
+    query = f"{place_name}, {context_query}" if context_query else place_name
+    try:
+        with httpx.Client() as client:
+            response = client.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={"q": query, "format": "json", "limit": 1},
+                headers={"User-Agent": "VACAY-Travel-Planner/1.0"},
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            data = response.json()
+    except Exception as exc:
+        logger.warning("Nominatim geocode failed for %s: %s", query, exc)
+        return None
+
+    if not data:
+        return None
+
+    return [float(data[0]["lon"]), float(data[0]["lat"])]
+
+
+def _looks_like_generic_place_result(name: str) -> bool:
+    lowered = name.lower().strip()
+    if not lowered:
+        return True
+    if any(token in lowered for token in GENERIC_PLACE_RESULT_TOKENS):
+        return True
+    return lowered.startswith(("the best ", "best ", "top ", "search ", "dining |"))
+
+
+def _pick_named_place_result(results: list[dict], anchor_coords: tuple[float, float] | None) -> dict | None:
+    valid_results = []
+    for result in results:
+        name = str(result.get("name") or "").strip()
+        coords = result.get("coords")
+        if not name or not coords or _looks_like_generic_place_result(name):
+            continue
+        valid_results.append(result)
+
+    if not valid_results:
+        return None
+
+    return valid_results[0]
+
+
+def _search_places_nearby_sync(
+    anchor_coords: tuple[float, float] | None,
+    meal_type: str,
+    cuisine_hint: str = "",
+    radius_meters: int = 1800,
+) -> list[dict]:
+    if not anchor_coords:
+        return []
+
+    lon, lat = anchor_coords
+    amenity_pattern = {
+        "lunch": "restaurant|cafe|fast_food",
+        "dinner": "restaurant|pub|bar|cafe",
+        "breakfast": "cafe|bakery|restaurant",
+        "brunch": "cafe|restaurant|bakery",
+    }.get(meal_type.lower(), "restaurant|cafe|pub|bar|fast_food")
+
+    query = textwrap.dedent(
+        f"""
+        [out:json][timeout:25];
+        (
+          node["amenity"~"{amenity_pattern}"](around:{radius_meters},{lat},{lon});
+          way["amenity"~"{amenity_pattern}"](around:{radius_meters},{lat},{lon});
+          relation["amenity"~"{amenity_pattern}"](around:{radius_meters},{lat},{lon});
+        );
+        out center 60;
+        """
+    ).strip()
+
+    amenity_rank = {
+        "lunch": {"restaurant": 0, "cafe": 1, "fast_food": 2, "pub": 3, "bar": 4},
+        "dinner": {"restaurant": 0, "pub": 1, "bar": 2, "cafe": 3, "fast_food": 4},
+        "breakfast": {"cafe": 0, "bakery": 1, "restaurant": 2, "fast_food": 3},
+        "brunch": {"cafe": 0, "restaurant": 1, "bakery": 2, "fast_food": 3},
+    }.get(meal_type.lower(), {"restaurant": 0, "cafe": 1, "pub": 2, "bar": 3, "fast_food": 4})
+
+    try:
+        with httpx.Client() as client:
+            response = client.get(
+                OVERPASS_INTERPRETER_URL,
+                params={"data": query},
+                headers={"User-Agent": "VACAY-Travel-Planner/1.0", "Accept": "application/json"},
+                timeout=15.0,
+            )
+            response.raise_for_status()
+            payload = response.json()
+    except Exception as exc:
+        logger.warning("Nearby place lookup failed for %s around %s: %s", meal_type, anchor_coords, exc)
+        return []
+
+    results: list[dict] = []
+    for item in payload.get("elements", []):
+        tags = item.get("tags") or {}
+        name = str(tags.get("name") or "").strip()
+        if not name:
+            continue
+
+        center = item.get("center") or {}
+        candidate_lon = item.get("lon", center.get("lon"))
+        candidate_lat = item.get("lat", center.get("lat"))
+        if candidate_lon is None or candidate_lat is None:
+            continue
+
+        cuisine = str(tags.get("cuisine") or "")
+        if cuisine_hint and cuisine_hint.lower() not in cuisine.lower() and cuisine_hint.lower() not in name.lower():
+            continue
+
+        results.append(
+            {
+                "name": name,
+                "amenity": tags.get("amenity") or "",
+                "description": ", ".join(
+                    part
+                    for part in (
+                        tags.get("amenity"),
+                        tags.get("cuisine"),
+                        tags.get("addr:street"),
+                    )
+                    if part
+                )
+                or f"Nearby {meal_type} stop",
+                "coords": [float(candidate_lon), float(candidate_lat)],
+                "url": tags.get("website") or tags.get("contact:website") or "",
+                "image": "",
+            }
+        )
+
+    filtered_results = [
+        item
+        for item in results
+        if item.get("name") and not _looks_like_generic_place_result(str(item.get("name")))
+    ]
+
+    return sorted(
+        filtered_results,
+        key=lambda item: (
+            amenity_rank.get(str(item.get("amenity") or ""), 99),
+            haversine_km((item["coords"][0], item["coords"][1]), anchor_coords),
+            str(item.get("name") or "").lower(),
+        ),
+    )
+
+
+def _select_meal_anchor(day: Day, meal_type: str) -> POI | None:
+    if not day.pois:
+        return None
+
+    target_minutes = {
+        "breakfast": 9 * 60,
+        "brunch": 11 * 60,
+        "lunch": 12 * 60 + 30,
+        "dinner": 19 * 60,
+    }.get(meal_type.lower(), 12 * 60 + 30)
+
+    best: tuple[int, POI] | None = None
+    for poi in day.pois:
+        parsed = _parse_time_slot(poi.time_slot or "")
+        if parsed:
+            midpoint = (parsed[0] + parsed[1]) // 2
+            score = abs(midpoint - target_minutes)
+        else:
+            score = 9999
+        if best is None or score < best[0]:
+            best = (score, poi)
+    return best[1] if best else day.pois[0]
+
+
+def _fit_day_within_clock(trip: Trip, day_number: int) -> tuple[Trip, list[str]]:
+    dropped: list[str] = []
+
+    while True:
+        trip, message = _execute_replan_day(trip, day_number)
+        if "too packed" not in message.lower():
+            return trip, dropped
+
+        target_day = next((day for day in trip.days if day.day_number == day_number), None)
+        if not target_day:
+            return trip, dropped
+
+        candidate = _pick_drop_candidate(target_day.pois)
+        if not candidate or candidate.priority == "high":
+            return trip, dropped
+
+        target_day.pois = [poi for poi in target_day.pois if poi.id != candidate.id]
+        dropped.append(candidate.name)
+
+
+def _day_centroid(day: Day) -> tuple[float, float]:
+    if not day.pois:
+        return (0.0, 0.0)
+    return (
+        sum(poi.coords[0] for poi in day.pois) / len(day.pois),
+        sum(poi.coords[1] for poi in day.pois) / len(day.pois),
+    )
+
+
+def _shrink_trip_days(trip: Trip, target_days: int) -> tuple[Trip, list[str]]:
+    dropped_names: list[str] = []
+
+    while len(trip.days) > target_days:
+        centroids = {day.day_number: _day_centroid(day) for day in trip.days if day.pois}
+
+        remote_candidates: list[tuple[float, int, int, Day]] = []
+        for day in trip.days:
+            if not day.pois or any(poi.priority == "high" for poi in day.pois):
+                continue
+
+            other_centroids = [
+                centroids[other.day_number]
+                for other in trip.days
+                if other.day_number != day.day_number and other.pois
+            ]
+            if not other_centroids:
+                continue
+
+            nearest_distance = min(
+                haversine_km(centroids[day.day_number], other_centroid)
+                for other_centroid in other_centroids
+            )
+            remote_candidates.append((nearest_distance, len(day.pois), day.day_number, day))
+
+        remote_day = next(
+            (
+                day
+                for nearest_distance, day_size, _day_number, day in sorted(
+                    remote_candidates,
+                    key=lambda item: (-item[0], item[1], item[2]),
+                )
+                if nearest_distance >= MAX_CLUSTER_MOVE_KM * 2 and day_size <= 2
+            ),
+            None,
+        )
+
+        if remote_day is not None:
+            dropped_names.extend(poi.name for poi in remote_day.pois)
+            trip.days = [day for day in trip.days if day.day_number != remote_day.day_number]
+            continue
+
+        pair_distances: list[tuple[float, int, int]] = []
+        for index, left_day in enumerate(trip.days):
+            if not left_day.pois:
+                continue
+            for right_day in trip.days[index + 1 :]:
+                if not right_day.pois:
+                    continue
+                pair_distances.append(
+                    (
+                        haversine_km(centroids[left_day.day_number], centroids[right_day.day_number]),
+                        left_day.day_number,
+                        right_day.day_number,
+                    )
+                )
+
+        if not pair_distances:
+            break
+
+        _distance, left_day_number, right_day_number = min(pair_distances, key=lambda item: item[0])
+        left_day = next(day for day in trip.days if day.day_number == left_day_number)
+        right_day = next(day for day in trip.days if day.day_number == right_day_number)
+        left_day.pois.extend(right_day.pois)
+        trip.days = [day for day in trip.days if day.day_number != right_day_number]
+
+    return trip, dropped_names
+
+
+def _drop_remote_outlier_pois(pois: list[POI], target_days: int) -> tuple[list[POI], list[str]]:
+    remaining = list(pois)
+    dropped_names: list[str] = []
+
+    while len(remaining) > target_days:
+        probe_k = min(len(remaining), target_days + 1)
+        if probe_k <= target_days:
+            break
+
+        probe_clusters = _geographic_cluster(remaining, probe_k)
+        centroids = [
+            (
+                sum(poi.coords[0] for poi in cluster) / len(cluster),
+                sum(poi.coords[1] for poi in cluster) / len(cluster),
+            )
+            for cluster in probe_clusters
+            if cluster
+        ]
+        if len(centroids) <= target_days:
+            break
+
+        candidate_clusters: list[tuple[float, int, list[POI]]] = []
+        for cluster in probe_clusters:
+            if not cluster or len(cluster) > 2:
+                continue
+
+            cluster_centroid = (
+                sum(poi.coords[0] for poi in cluster) / len(cluster),
+                sum(poi.coords[1] for poi in cluster) / len(cluster),
+            )
+            other_centroids = [centroid for centroid in centroids if centroid != cluster_centroid]
+            if not other_centroids:
+                continue
+
+            nearest_distance = min(
+                haversine_km(cluster_centroid, other_centroid)
+                for other_centroid in other_centroids
+            )
+            candidate_clusters.append((nearest_distance, len(cluster), cluster))
+
+        if not candidate_clusters:
+            break
+
+        nearest_distance, _cluster_size, cluster = max(
+            candidate_clusters,
+            key=lambda item: (item[0], -item[1]),
+        )
+        target_clusters = _balance_clusters(_geographic_cluster(remaining, target_days))
+        target_days_are_full = (
+            len(remaining) >= target_days * MAX_CLUSTER_POIS_PER_DAY
+            and bool(target_clusters)
+            and all(cluster_items and len(cluster_items) >= MAX_CLUSTER_POIS_PER_DAY for cluster_items in target_clusters)
+        )
+
+        if nearest_distance < MAX_CLUSTER_MOVE_KM * 2:
+            if not (target_days_are_full and len(cluster) == 1 and nearest_distance >= MAX_CLUSTER_MOVE_KM * 0.3):
+                break
+
+        if nearest_distance <= 0:
+            break
+
+        cluster_ids = {poi.id for poi in cluster}
+        dropped_names.extend(poi.name for poi in cluster)
+        remaining = [poi for poi in remaining if poi.id not in cluster_ids]
+
+    return remaining, dropped_names
+
+
+def _execute_resize_trip(trip: Trip, target_days: int) -> tuple[Trip, str]:
+    if target_days < 1:
+        return trip, "Trip must have at least 1 day."
+
+    all_pois = [poi for day in trip.days for poi in day.pois]
+    if not all_pois:
+        return trip, "Trip has no locations to resize."
+
+    try:
+        base_date = datetime.strptime(trip.days[0].date, "%Y-%m-%d")
+    except Exception:
+        base_date = datetime.utcnow()
+
+    dropped_names: list[str] = []
+    if target_days < len(trip.days):
+        all_pois, dropped_names = _drop_remote_outlier_pois(all_pois, target_days)
+
+    cluster_count = min(target_days, len(all_pois))
+    clusters = _balance_clusters(_geographic_cluster(all_pois, cluster_count))
+    if target_days > cluster_count:
+        clusters.extend([[] for _ in range(target_days - cluster_count)])
+
+    rebuilt_days: list[Day] = []
+    for index, cluster in enumerate(clusters[:target_days], start=1):
+        rebuilt_days.append(
+            Day(
+                day_number=index,
+                date=(base_date + timedelta(days=index - 1)).strftime("%Y-%m-%d"),
+                pois=list(cluster),
+            )
+        )
+
+    trip.days = rebuilt_days
+
+    for day in trip.days:
+        if not day.pois:
+            continue
+        trip, day_drops = _fit_day_within_clock(trip, day.day_number)
+        dropped_names.extend(day_drops)
+
+    non_empty_days = [day for day in trip.days if day.pois]
+    if non_empty_days:
+        trip.days = non_empty_days
+        for index, day in enumerate(trip.days, start=1):
+            day.day_number = index
+            day.date = (base_date + timedelta(days=index - 1)).strftime("%Y-%m-%d")
+
+    if dropped_names:
+        return trip, f"Resized trip to {len(trip.days)} days and dropped: {', '.join(dropped_names)}."
+    return trip, f"Resized trip to {len(trip.days)} days."
+
+
+def _execute_add_meal_stop(
+    trip: Trip,
+    day_number: int,
+    meal_type: str,
+    cuisine_hint: str = "",
+) -> tuple[Trip, str]:
+    target_day = next((day for day in trip.days if day.day_number == day_number), None)
+    if not target_day:
+        return trip, f"Day {day_number} does not exist."
+
+    anchor = _select_meal_anchor(target_day, meal_type)
+    city_hint = trip.title or ""
+    anchor_name = anchor.name if anchor else city_hint
+
+    anchor_coords = anchor.coords if anchor else None
+    results = _search_places_nearby_sync(anchor_coords, meal_type, cuisine_hint=cuisine_hint)
+    existing_names = {poi.name.strip().lower() for poi in target_day.pois if poi.category == "Food"}
+    unique_results = [
+        result
+        for result in results
+        if str(result.get("name") or "").strip().lower() not in existing_names
+    ]
+    best_result = _pick_named_place_result(unique_results or results, anchor_coords)
+    if not best_result:
+        return trip, f"Could not find a {meal_type} place near {anchor_name}."
+
+    coords = best_result.get("coords") or [0.0, 0.0]
+    meal_slots = {
+        "breakfast": "09:00 - 10:00",
+        "brunch": "11:00 - 12:15",
+        "lunch": "12:30 - 13:45",
+        "dinner": "19:00 - 20:30",
+    }
+    slot = meal_slots.get(meal_type.lower(), "12:30 - 13:45")
+    vibe = best_result.get("description") or f"{meal_type.title()} stop near {anchor_name}"
+    add_args = {
+        "day_number": day_number,
+        "name": best_result["name"],
+        "category": "Food",
+        "time_slot": slot,
+        "vibe": vibe,
+        "longitude": coords[0],
+        "latitude": coords[1],
+        "priority": "normal",
+        "intensity": "low",
+        "visit_duration": 75 if meal_type.lower() in {"lunch", "dinner", "brunch"} else 60,
+        "img": best_result.get("image") or _fetch_image(best_result["name"]),
+    }
+    trip, add_message = _execute_add(trip, add_args)
+    trip, _ = _fit_day_within_clock(trip, day_number)
+    return trip, add_message
+
 def _geographic_cluster(pois: list[POI], k: int) -> list[list[POI]]:
     """Simple geographic clustering: assign POIs to k groups based on proximity.
 
@@ -591,11 +1128,12 @@ def _geographic_cluster(pois: list[POI], k: int) -> list[list[POI]]:
 
 
 def _balance_clusters(clusters: list[list[POI]]) -> list[list[POI]]:
-    """Rebalance clusters so no day is overloaded while others are starved.
+    """Rebalance clusters only when a day is overloaded.
 
-    Moves POIs from the largest cluster to the smallest, picking the POI
-    geographically closest to the target cluster's centroid. Stops when
-    the difference between largest and smallest is <= 1.
+    The old implementation forced cluster sizes toward equality, which could
+    pull a city stop into a remote outlier day just to smooth the counts.
+    Here we only rebalance when a day exceeds the practical per-day cap, and
+    we move the best candidate to the geographically closest receiving cluster.
     """
     if not clusters or len(clusters) <= 1:
         return clusters
@@ -611,21 +1149,31 @@ def _balance_clusters(clusters: list[list[POI]]) -> list[list[POI]]:
     for _ in range(max_iterations):
         sizes = [len(c) for c in clusters]
         max_size = max(sizes)
-        min_size = min(sizes)
-        if max_size - min_size <= 1:
+        if max_size <= MAX_CLUSTER_POIS_PER_DAY:
             break
 
         biggest_idx = sizes.index(max_size)
-        smallest_idx = sizes.index(min_size)
+        best_move: tuple[float, int, POI] | None = None
+        for target_idx, target_cluster in enumerate(clusters):
+            if target_idx == biggest_idx or len(target_cluster) >= MAX_CLUSTER_POIS_PER_DAY:
+                continue
 
-        # Pick POI from biggest that is closest to smallest's centroid
-        target_centroid = _centroid(clusters[smallest_idx])
-        best_poi = min(
-            clusters[biggest_idx],
-            key=lambda p: haversine_km(p.coords, target_centroid),
-        )
+            target_centroid = _centroid(target_cluster)
+            candidate = min(
+                clusters[biggest_idx],
+                key=lambda p: haversine_km(p.coords, target_centroid),
+            )
+            distance = haversine_km(candidate.coords, target_centroid)
+
+            if best_move is None or distance < best_move[0]:
+                best_move = (distance, target_idx, candidate)
+
+        if best_move is None or best_move[0] > MAX_CLUSTER_MOVE_KM:
+            break
+
+        _, target_idx, best_poi = best_move
         clusters[biggest_idx].remove(best_poi)
-        clusters[smallest_idx].append(best_poi)
+        clusters[target_idx].append(best_poi)
 
     return clusters
 

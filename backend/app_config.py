@@ -30,6 +30,7 @@ class AppConfig:
     assistant: AssistantConfig
     llm: LLMConfig
     copy: dict[str, Any]
+    booking_defaults: dict[str, Any]
 
 
 class _SafeDict(dict):
@@ -62,6 +63,7 @@ def load_app_config() -> AppConfig:
     assistant_raw = data.get("assistant") if isinstance(data.get("assistant"), dict) else {}
     llm_raw = data.get("llm") if isinstance(data.get("llm"), dict) else {}
     copy_raw = data.get("copy") if isinstance(data.get("copy"), dict) else {}
+    booking_defaults_raw = data.get("booking_defaults") if isinstance(data.get("booking_defaults"), dict) else {}
 
     language = str(assistant_raw.get("language") or "English").strip() or "English"
     assistant = AssistantConfig(
@@ -82,6 +84,7 @@ def load_app_config() -> AppConfig:
         assistant=assistant,
         llm=llm,
         copy=dict(copy_raw),
+        booking_defaults=dict(booking_defaults_raw),
     )
 
 
@@ -128,3 +131,14 @@ def _lookup_copy(path: str) -> str:
 def render_copy(path: str, **kwargs: Any) -> str:
     template = _lookup_copy(path)
     return template.format_map(_SafeDict(**kwargs))
+
+
+def get_default_flight_origin() -> dict[str, str]:
+    raw = load_app_config().booking_defaults.get("flight_origin")
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        "name": str(raw.get("name") or "").strip(),
+        "airport_code": str(raw.get("airport_code") or "").strip(),
+        "city_code": str(raw.get("city_code") or "").strip(),
+    }
