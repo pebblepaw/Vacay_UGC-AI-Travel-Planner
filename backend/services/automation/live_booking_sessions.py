@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from base64 import urlsafe_b64decode, urlsafe_b64encode
 from dataclasses import dataclass
 import asyncio
+import hashlib
+import hmac
+import json
 import time
 import uuid
 from typing import Any
+
+from backend.config import settings
 
 
 @dataclass
@@ -79,6 +85,38 @@ class LiveBookingSessionRegistry:
                 exit_fn = getattr(playwright, "__aexit__", None)
                 if callable(exit_fn):
                     await exit_fn(None, None, None)
+
+    def make_takeover_token(
+        self,
+        *,
+        session_id: str,
+        workspace_id: str | None = None,
+        ttl_seconds: int = 60 * 60,
+    ) -> str:
+        payload = {
+            "session_id": session_id,
+            "workspace_id": workspace_id,
+            "exp": int(time.time()) + ttl_seconds,
+        }
+        body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+        secret = (settings.SECRET_KEY or "vacayclaw-dev-secret").encode()
+        signature = hmac.new(secret, body, hashlib.sha256).hexdigest().encode()
+        return f"{urlsafe_b64encode(body).decode()}.{signature.decode()}"
+
+    def verify_takeover_token(self, token: str) -> dict[str, Any] | None:
+        try:
+            encoded_body, signature = token.split(".", 1)
+            body = urlsafe_b64decode(encoded_body.encode())
+            secret = (settings.SECRET_KEY or "vacayclaw-dev-secret").encode()
+            expected = hmac.new(secret, body, hashlib.sha256).hexdigest()
+            if not hmac.compare_digest(expected, signature):
+                return None
+            payload = json.loads(body.decode())
+            if int(payload.get("exp", 0)) < int(time.time()):
+                return None
+            return payload
+        except Exception:
+            return None
 
 
 live_booking_sessions = LiveBookingSessionRegistry()

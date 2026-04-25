@@ -146,6 +146,198 @@ async def test_build_workspace_snapshot_uses_poi_media_urls_over_title_guess(
 
 
 @pytest.mark.asyncio
+async def test_build_workspace_snapshot_rewrites_media_urls_to_public_api_base(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    trip = Trip(
+        trip_id="trip_public_media_base",
+        title="Public Media Base Trip",
+        source_videos=[
+            SourceVideo(
+                platform="tiktok",
+                url="https://www.tiktok.com/@demo/video/1",
+                title="Demo Clip",
+                preview_url="http://127.0.0.1:8000/media/demo.mp4",
+            )
+        ],
+        days=[
+            Day(
+                day_number=1,
+                date="2026-05-01",
+                pois=[
+                    POI(
+                        id="poi_public_media",
+                        name="Demo Place",
+                        category="Culture",
+                        coords=(151.2, -33.8),
+                        img="https://example.com/demo.jpg",
+                        time_slot="10:00 - 12:00",
+                        vibe="Demo vibe",
+                        priority="high",
+                        intensity="normal",
+                        visit_duration=90,
+                        media_urls=["https://www.tiktok.com/@demo/video/1"],
+                    )
+                ],
+            )
+        ],
+        accommodation=Accommodation(
+            name="Demo Hotel",
+            price_per_night=200,
+            status="Mock",
+            img="https://example.com/hotel.jpg",
+            coords=(139.7, 35.6),
+        ),
+    )
+
+    monkeypatch.setattr(workspace_runtime, "load_runtime_state", AsyncMock(return_value={}))
+    monkeypatch.setattr(workspace_runtime, "list_memory", AsyncMock(return_value={}))
+    monkeypatch.setattr(workspace_runtime, "list_events", AsyncMock(return_value=[]))
+    monkeypatch.setattr("backend.services.workspace_runtime.settings.PUBLIC_API_BASE_URL", "https://demo.vacayclaw.test")
+
+    class _FakeTable:
+        def upsert(self, payload):
+            self.payload = payload
+            return self
+
+        def execute(self):
+            return SimpleNamespace(data=[])
+
+    monkeypatch.setattr(
+        "backend.services.workspace_runtime.supabase_storage",
+        SimpleNamespace(client=SimpleNamespace(table=lambda _name: _FakeTable())),
+    )
+
+    snapshot = await workspace_runtime.build_workspace_snapshot("telegram:-100:main", trip)
+
+    assert snapshot["trip"]["source_videos"][0]["preview_url"] == "https://demo.vacayclaw.test/media/demo.mp4"
+    assert snapshot["media_by_place"]["poi_public_media"][0]["url"] == "https://demo.vacayclaw.test/media/demo.mp4"
+
+
+@pytest.mark.asyncio
+async def test_restart_workspace_preserves_metadata_and_filters_old_runtime_records(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    stored_workspace = {
+        "id": "telegram:-100:main",
+        "title": "Existing Workspace",
+        "trip_id": "trip_old",
+        "source": "telegram",
+        "data": {
+            "created_at": "2026-04-24T00:00:00+00:00",
+            "started_at": "2026-04-24T00:00:00+00:00",
+            "updated_at": "2026-04-24T00:00:00+00:00",
+        },
+    }
+    stored_events = [
+        {
+            "role": "agent",
+            "content": "old event",
+            "metadata": {},
+            "created_at": "2026-04-24T01:00:00+00:00",
+        },
+        {
+            "role": "agent",
+            "content": "fresh event",
+            "metadata": {},
+            "created_at": "2026-04-26T01:00:00+00:00",
+        },
+    ]
+    stored_memory = [
+        {
+            "memory_key": "old_key",
+            "memory_value": "old value",
+            "updated_at": "2026-04-24T01:00:00+00:00",
+        },
+        {
+            "memory_key": "fresh_key",
+            "memory_value": "fresh value",
+            "updated_at": "2026-04-26T01:00:00+00:00",
+        },
+    ]
+    runtime_state_row = {"state": {"booking_context": {"destination": "Tokyo"}}}
+    class _FakeTable:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.filters: list[tuple[str, str, object]] = []
+            self._mode = "select"
+            self.payload = None
+
+        def select(self, *_args, **_kwargs):
+            self._mode = "select"
+            return self
+
+        def eq(self, key, value):
+            self.filters.append(("eq", key, value))
+            return self
+
+        def gte(self, key, value):
+            self.filters.append(("gte", key, value))
+            return self
+
+        def is_(self, key, value):
+            self.filters.append(("is", key, value))
+            return self
+
+        def limit(self, *_args, **_kwargs):
+            return self
+
+        def order(self, *_args, **_kwargs):
+            return self
+
+        def upsert(self, payload):
+            self._mode = "upsert"
+            self.payload = payload
+            if self.name == "workspaces":
+                stored_workspace.update(payload)
+            elif self.name == "workspace_runtime_state":
+                runtime_state_row.update(payload)
+            return self
+
+        def delete(self):
+            self._mode = "delete"
+            return self
+
+        def execute(self):
+            if self.name == "workspaces":
+                return SimpleNamespace(data=[stored_workspace.copy()])
+            if self.name == "workspace_runtime_state":
+                return SimpleNamespace(data=[runtime_state_row.copy()])
+            if self.name == "conversation_events":
+                data = stored_events
+                for op, key, value in self.filters:
+                    if op == "gte":
+                        data = [row for row in data if row.get(key, "") >= value]
+                return SimpleNamespace(data=data)
+            if self.name == "memory_entries":
+                data = stored_memory
+                for op, key, value in self.filters:
+                    if op == "gte":
+                        data = [row for row in data if row.get(key, "") >= value]
+                return SimpleNamespace(data=data)
+            return SimpleNamespace(data=[])
+
+    monkeypatch.setattr(
+        "backend.services.workspace_runtime.supabase_storage",
+        SimpleNamespace(client=SimpleNamespace(table=lambda name: _FakeTable(name))),
+    )
+
+    restarted = await workspace_runtime.restart_workspace("telegram:-100:main", title="Fresh Workspace")
+    started_at = restarted["data"]["started_at"]
+    stored_events[1]["created_at"] = started_at
+    stored_memory[1]["updated_at"] = started_at
+
+    events = await workspace_runtime.list_events("telegram:-100:main")
+    memory = await workspace_runtime.list_memory("telegram:-100:main")
+
+    assert restarted["trip_id"].startswith("trip_")
+    assert restarted["data"]["created_at"] == "2026-04-24T00:00:00+00:00"
+    assert runtime_state_row["state"] == {}
+    assert [event["content"] for event in events] == ["fresh event"]
+    assert memory == {"fresh_key": "fresh value"}
+
+
+@pytest.mark.asyncio
 async def test_build_workspace_snapshot_notifies_subscribers(monkeypatch: pytest.MonkeyPatch):
     trip = Trip(
         trip_id="trip_live_updates",

@@ -5,27 +5,60 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     env_file:
-      - .env
+      - ${VACAY_ENV_FILE:-.env}
+    environment:
+      REMOTE_BROWSER_CDP_URL: ${REMOTE_BROWSER_CDP_URL:-http://browser-worker:9222}
+      PUBLIC_REMOTE_BROWSER_URL: ${PUBLIC_REMOTE_BROWSER_URL:-http://localhost/remote-browser/vnc.html?autoconnect=true&resize=scale}
+      PUBLIC_WEB_BASE_URL: ${PUBLIC_WEB_BASE_URL:-http://localhost}
     ports:
       - "8000:8000"
     volumes:
       - ./downloads:/app/downloads
+    depends_on:
+      - browser-worker
 
   frontend:
     build:
       context: .
       dockerfile: frontend/Dockerfile
+      args:
+        MAPBOX_PUBLIC: ${MAPBOX_PUBLIC:-}
+        VITE_API_URL: ${VITE_API_URL:-}
     ports:
       - "8080:80"
     depends_on:
       - backend
+
+  browser-worker:
+    build:
+      context: .
+      dockerfile: deploy/browser-worker/Dockerfile
+    shm_size: "2gb"
+    environment:
+      DISPLAY: ":99"
+    expose:
+      - "7900"
+      - "9222"
+      - "5900"
+    volumes:
+      - browser-worker-data:/data
 
   nginx:
     image: nginx:1.27-alpine
     depends_on:
       - frontend
       - backend
+      - browser-worker
     volumes:
       - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     ports:
       - "80:80"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate --url http://nginx:80
+    depends_on:
+      - nginx
+
+volumes:
+  browser-worker-data:

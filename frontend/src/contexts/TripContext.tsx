@@ -12,6 +12,7 @@ import {
   type WorkspaceSnapshotResponse,
 } from '@/lib/api';
 import { createClientMessageId, PendingChatMessage } from '@/lib/chatMessages';
+import { normalizeTripAssetUrls } from '@/lib/assets';
 import { useToast } from '@/hooks/use-toast';
 
 interface TripContextType {
@@ -64,7 +65,7 @@ export const mapWorkspaceEventsToMessages = (events: Array<Record<string, unknow
 };
 
 export const hydrateWorkspaceSnapshot = (snapshot: WorkspaceSnapshotResponse) => ({
-  trip: snapshot.trip,
+  trip: normalizeTripAssetUrls(snapshot.trip),
   mediaByPlace: snapshot.media_by_place || {},
   chatMessages: mapWorkspaceEventsToMessages(snapshot.recent_events || []),
 });
@@ -104,7 +105,7 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId, wo
       setIsLoading(true);
       try {
         const data = await getTrip(id);
-        setTrip(data);
+        setTrip(normalizeTripAssetUrls(data));
         setChatMessages([
           {
             id: createClientMessageId(),
@@ -153,7 +154,7 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId, wo
       .then((data) => {
         if (data.trips && data.trips.length > 0) {
           const latest = data.trips[0];
-          setTrip(latest);
+          setTrip(normalizeTripAssetUrls(latest));
           setChatMessages([
             {
               id: createClientMessageId(),
@@ -272,7 +273,7 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId, wo
         });
 
         if (response.updated_trip) {
-          setTrip(response.updated_trip);
+          setTrip(normalizeTripAssetUrls(response.updated_trip));
         }
 
         if (workspaceId) {

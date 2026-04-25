@@ -60,6 +60,12 @@ copy:
     checkout_live_browser_payment: |-
       I left the live Trip.com browser window open at the pre-payment step. Review the fare and finish there.
       Status: {status}
+    checkout_remote_browser_user_input: |-
+      I opened the hosted remote browser on the traveler page. Continue there and stop before payment.
+      Status: {status}
+    checkout_remote_browser_payment: |-
+      I opened the hosted remote browser at the pre-payment step. Review the fare and finish there.
+      Status: {status}
     guard_no_completion: "I do not have real live {provider} results yet, so I cannot claim the booking is done."
   general:
     today: "Today is {date}."

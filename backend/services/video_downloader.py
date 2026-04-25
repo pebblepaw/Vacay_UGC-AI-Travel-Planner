@@ -69,9 +69,11 @@ class VideoDownloaderService:
             if (
                 not result.get("success")
                 and platform == "tiktok"
-                and "/photo/" in url.lower()
             ):
-                result = await loop.run_in_executor(None, self._download_tiktok_photo_post, url)
+                if "/photo/" in url.lower():
+                    result = await loop.run_in_executor(None, self._download_tiktok_photo_post, url)
+                else:
+                    result = await loop.run_in_executor(None, self._download_tiktok_video_page, url)
             result.setdefault("url", url)
             result.setdefault("platform", platform)
             return result
@@ -235,6 +237,83 @@ class VideoDownloaderService:
             "description": desc or title,
             "platform": "tiktok",
             "thumbnail": image_url,
+        }
+
+    def _download_tiktok_video_page(self, url: str) -> dict:
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+                "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 "
+                "Mobile/15E148 Safari/604.1"
+            )
+        }
+
+        with httpx.Client(headers=headers, follow_redirects=True, timeout=self.timeout) as client:
+            response = client.get(url)
+            response.raise_for_status()
+            page = response.text
+
+            desc_match = re.search(r'"desc":"(.*?)"', page, re.S)
+            desc = self._decode_embedded_text(desc_match.group(1)) if desc_match else ""
+
+            video_match = re.search(r'"playAddr":"(.*?)"', page, re.S)
+            if not video_match:
+                video_match = re.search(r'"downloadAddr":"(.*?)"', page, re.S)
+            if not video_match:
+                return {
+                    "success": False,
+                    "url": url,
+                    "error": "TikTok page did not expose a playable video URL",
+                    "title": desc or "Unknown",
+                    "platform": "tiktok",
+                }
+
+            video_url = self._decode_embedded_text(video_match.group(1))
+            if not video_url:
+                return {
+                    "success": False,
+                    "url": url,
+                    "error": "TikTok video URL was empty after decoding",
+                    "title": desc or "Unknown",
+                    "platform": "tiktok",
+                }
+
+            thumbnail_match = re.search(r'"cover":"(.*?)"', page, re.S)
+            thumbnail = self._decode_embedded_text(thumbnail_match.group(1)) if thumbnail_match else ""
+
+            file_path = self.download_dir / f"{uuid.uuid4().hex[:8]}.mp4"
+            total_bytes = 0
+            with client.stream("GET", video_url) as video_response:
+                video_response.raise_for_status()
+                with file_path.open("wb") as output_file:
+                    for chunk in video_response.iter_bytes():
+                        if not chunk:
+                            continue
+                        total_bytes += len(chunk)
+                        if total_bytes > self.max_size_bytes:
+                            file_path.unlink(missing_ok=True)
+                            return {
+                                "success": False,
+                                "url": url,
+                                "error": (
+                                    f"Video too large ({total_bytes / 1024 / 1024:.1f}MB > "
+                                    f"{settings.MAX_VIDEO_SIZE_MB}MB)"
+                                ),
+                                "title": desc or "Unknown",
+                                "platform": "tiktok",
+                            }
+                        output_file.write(chunk)
+
+        title = (desc or "TikTok video").strip()
+        return {
+            "success": True,
+            "url": url,
+            "file_path": str(file_path),
+            "preview_url": self.public_media_url(str(file_path)),
+            "title": title[:120],
+            "description": desc or title,
+            "platform": "tiktok",
+            "thumbnail": thumbnail,
         }
 
     def cleanup_video(self, file_path: str) -> bool:

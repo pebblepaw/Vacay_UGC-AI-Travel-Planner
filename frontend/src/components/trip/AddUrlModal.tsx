@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -105,6 +106,9 @@ export const AddUrlModal = () => {
             <Video className="h-5 w-5 text-primary" />
             Add Video Links
           </DialogTitle>
+          <DialogDescription>
+            Paste travel video links from TikTok, YouTube, Instagram, Douyin, or Rednote to merge them into the trip.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 pt-4">

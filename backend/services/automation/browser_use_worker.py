@@ -196,8 +196,19 @@ class BrowserUseWorker:
         else:
             playwright = playwright_factory
 
-        browser = await playwright.chromium.launch(headless=False, timeout=30000)
-        page = await browser.new_page()
+        remote_cdp_url = str(getattr(settings, "REMOTE_BROWSER_CDP_URL", "") or "").strip()
+        if remote_cdp_url:
+            browser = await playwright.chromium.connect_over_cdp(remote_cdp_url)
+            existing_contexts = list(getattr(browser, "contexts", []) or [])
+            if existing_contexts and getattr(existing_contexts[0], "pages", None):
+                page = existing_contexts[0].pages[0]
+            elif existing_contexts and hasattr(existing_contexts[0], "new_page"):
+                page = await existing_contexts[0].new_page()
+            else:
+                page = await browser.new_page()
+        else:
+            browser = await playwright.chromium.launch(headless=False, timeout=30000)
+            page = await browser.new_page()
         session = await live_booking_sessions.register(
             provider="trip.com",
             playwright=playwright,

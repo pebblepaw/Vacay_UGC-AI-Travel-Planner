@@ -11,7 +11,9 @@ from pathlib import Path
 import re
 from typing import Any
 
+from backend.services.browser_takeover import browser_takeover_service
 from backend.services.automation.live_booking_sessions import live_booking_sessions
+from backend.config import settings
 
 
 class PlaywrightCheckoutRunner:
@@ -36,6 +38,10 @@ class PlaywrightCheckoutRunner:
         live_session = await live_booking_sessions.get(live_session_id)
         requires_live_session = bool(offer.get("requires_live_session"))
 
+        if requires_live_session and live_session is None:
+            live_session = await self._reconnect_remote_live_session(offer)
+            if live_session is not None:
+                live_session_id = live_session.session_id
         if requires_live_session and live_session is None:
             return {
                 "status": "failed",
@@ -91,6 +97,7 @@ class PlaywrightCheckoutRunner:
                     is_results_deeplink=is_results_deeplink,
                     results_page_url=results_page_url,
                     using_live_browser=False,
+                    live_session_id=live_session_id,
                 )
 
         return await self._run_checkout_flow(
@@ -104,7 +111,58 @@ class PlaywrightCheckoutRunner:
             is_results_deeplink=is_results_deeplink,
             results_page_url=results_page_url,
             using_live_browser=using_live_browser,
+            live_session_id=live_session_id,
         )
+
+    async def _reconnect_remote_live_session(self, offer: dict[str, Any]) -> Any | None:
+        remote_cdp_url = str(getattr(settings, "REMOTE_BROWSER_CDP_URL", "") or "").strip()
+        if not remote_cdp_url:
+            return None
+
+        try:
+            from playwright.async_api import async_playwright as imported_async_playwright
+        except Exception:
+            return None
+
+        playwright_factory = imported_async_playwright()
+        if hasattr(playwright_factory, "start"):
+            playwright = await playwright_factory.start()
+        else:
+            playwright = playwright_factory
+
+        browser = None
+        try:
+            browser = await playwright.chromium.connect_over_cdp(remote_cdp_url)
+            existing_contexts = list(getattr(browser, "contexts", []) or [])
+            if existing_contexts and getattr(existing_contexts[0], "pages", None):
+                page = existing_contexts[0].pages[0]
+            elif existing_contexts and hasattr(existing_contexts[0], "new_page"):
+                page = await existing_contexts[0].new_page()
+            else:
+                page = await browser.new_page()
+
+            return await live_booking_sessions.register(
+                provider=str(offer.get("provider") or "trip.com"),
+                playwright=playwright,
+                browser=browser,
+                page=page,
+                query_summary=str(
+                    offer.get("title")
+                    or offer.get("results_page_url")
+                    or offer.get("deeplink")
+                    or "trip.com live reconnect"
+                ),
+            )
+        except Exception:
+            if browser is not None:
+                try:
+                    await browser.close()
+                except Exception:
+                    pass
+            stop = getattr(playwright, "stop", None)
+            if callable(stop):
+                await stop()
+            return None
 
     async def _run_checkout_flow(
         self,
@@ -119,6 +177,7 @@ class PlaywrightCheckoutRunner:
         is_results_deeplink: bool,
         results_page_url: str,
         using_live_browser: bool,
+        live_session_id: str,
     ) -> dict[str, Any]:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         before_path = self.artifacts_dir / f"checkout_before_{timestamp}.png"
@@ -169,6 +228,7 @@ class PlaywrightCheckoutRunner:
                 "status": result_status,
                 "reason": result_reason,
                 "confirmation_url": page.url,
+                "current_browser_url": page.url,
                 "screenshot": str(after_path),
                 "artifacts": [str(before_path), str(after_path)],
             }
@@ -181,6 +241,19 @@ class PlaywrightCheckoutRunner:
                         "Reached pre-payment stage in the live browser window. "
                         "Review and finish there. Final payment is intentionally not clicked."
                     )
+                if live_session_id and browser_takeover_service.enabled:
+                    result["handoff_channel"] = "remote_browser"
+                    result["confirmation_url"] = await browser_takeover_service.create_takeover_url(
+                        session_id=live_session_id,
+                        workspace_id=str(offer.get("workspace_id") or "") or None,
+                    )
+                    if skip_fill:
+                        result["reason"] = "Reached traveler info page in the hosted remote browser. Continue there."
+                    else:
+                        result["reason"] = (
+                            "Reached pre-payment stage in the hosted remote browser. "
+                            "Review the fare and finish there."
+                        )
             return result
         finally:
             if browser is not None and headless:

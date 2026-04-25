@@ -57,4 +57,14 @@ describe('AddUrlModal', () => {
       expect(refreshWorkspaceSnapshot).toHaveBeenCalled();
     });
   });
+
+  it('renders a dialog description for assistive technologies', async () => {
+    render(<AddUrlModal />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(
+      await screen.findByText(/Paste travel video links from TikTok, YouTube, Instagram, Douyin, or Rednote/i),
+    ).toBeInTheDocument();
+  });
 });

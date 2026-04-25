@@ -12,6 +12,7 @@ import logging
 from backend.config import settings
 from backend.routers import videos, trips, chat
 from backend.routers import workspaces, telegram
+from backend.routers import browser
 from backend.agent.graph import close_graph_checkpointer, configure_graph_checkpointer
 from backend.storage.supabase_storage import supabase_storage
 
@@ -67,6 +68,7 @@ app.include_router(trips.router)
 app.include_router(chat.router)
 app.include_router(workspaces.router)
 app.include_router(telegram.router)
+app.include_router(browser.router)
 app.mount("/media", StaticFiles(directory=str(settings.DOWNLOADS_DIR)), name="media")
 
 

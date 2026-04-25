@@ -43,3 +43,28 @@ def test_response_formatter_skips_fresh_tab_handoff_for_live_browser_checkout() 
 
     assert result["messages"][0].content
     assert result.get("chat_interrupt") is None
+
+
+def test_response_formatter_uses_remote_browser_copy_for_signed_takeover_page() -> None:
+    state = {
+        "messages": [AIMessage(content="")],
+        "trip": None,
+        "plan": [],
+        "current_step": 0,
+        "last_agent": "booking_agent",
+        "booking_result": {
+            "status": "needs_user_input",
+            "reason": "Reached traveler page in the hosted remote browser.",
+            "confirmation_url": "https://demo.vacay.ai/browser?token=signed",
+            "handoff_channel": "remote_browser",
+        },
+        "booking_offers": [],
+        "selected_offer": {},
+        "booking_context": {"provider_hint": "trip.com"},
+    }
+
+    result = response_formatter_node(state)
+
+    assert "remote browser" in result["messages"][0].content.lower()
+    assert result["chat_interrupt"]["interrupt_type"] == "open_url"
+    assert result["chat_interrupt"]["content"] == "https://demo.vacay.ai/browser?token=signed"

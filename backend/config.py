@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: Optional[str] = None
     PUBLIC_WEB_BASE_URL: str = "http://localhost:5173"
     PUBLIC_API_BASE_URL: str = "http://127.0.0.1:8000"
+    PUBLIC_REMOTE_BROWSER_URL: Optional[str] = None
+    REMOTE_BROWSER_CDP_URL: Optional[str] = None
 
     # Paths
     DOWNLOADS_DIR: Path = PROJECT_ROOT / "downloads"

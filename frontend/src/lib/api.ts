@@ -41,6 +41,14 @@ export interface WorkspaceSnapshotResponse {
   updated_at: string;
 }
 
+export interface BrowserTakeoverSessionResponse {
+  session_id: string;
+  workspace_id?: string | null;
+  active: boolean;
+  current_url: string;
+  embed_url: string;
+}
+
 export async function processVideos(
   urls: string[],
   tripTitle?: string
@@ -179,6 +187,17 @@ export async function createWorkspaceShareLink(workspaceId: string) {
   });
   if (!response.ok) {
     throw new Error('Failed to create workspace share link');
+  }
+  return response.json();
+}
+
+export async function getBrowserTakeoverSession(
+  token: string,
+): Promise<BrowserTakeoverSessionResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/browser/takeover?token=${encodeURIComponent(token)}`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to load browser takeover session');
   }
   return response.json();
 }

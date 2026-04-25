@@ -57,6 +57,10 @@ PENDING_CATEGORY_MAP = {
     "temple": "Culture",
     "shrine": "Culture",
 }
+WORKSPACE_RESET_RE = re.compile(
+    r"\b(reset|start over|new trip|restart trip|fresh trip|clear trip)\b",
+    re.IGNORECASE,
+)
 
 
 def _build_empty_workspace_trip(workspace_id: str) -> Trip:
@@ -73,6 +77,10 @@ def _build_empty_workspace_trip(workspace_id: str) -> Trip:
             coords=(0.0, 0.0),
         ),
     )
+
+
+def _requests_workspace_restart(message: str) -> bool:
+    return bool(WORKSPACE_RESET_RE.search(message or ""))
 
 
 def _build_media_staging_trip(workspace_id: str, video_metadata: list[dict], trip_title: str | None = None) -> Trip:
@@ -471,6 +479,30 @@ async def process_workspace_videos(workspace_id: str, request: VideoProcessReque
 
 
 async def _invoke_workspace_agent(workspace_id: str, message: str, user_id: str | None, source: str) -> ChatResponse:
+    if _requests_workspace_restart(message):
+        trip = _build_empty_workspace_trip(workspace_id)
+        await storage.save_trip(trip)
+        await workspace_runtime.restart_workspace(workspace_id, title=trip.title)
+        await workspace_runtime.bind_workspace_to_trip(workspace_id, trip.trip_id, title=trip.title)
+        await workspace_runtime.append_event(
+            workspace_id,
+            "agent",
+            "Started a fresh trip workspace. Send new travel links or ask for flights to continue.",
+            {"source": source, "reset": True},
+        )
+        await workspace_runtime.build_workspace_snapshot(workspace_id, trip)
+        return ChatResponse(
+            messages=[
+                ChatMessage(
+                    id=f"msg_{uuid.uuid4().hex[:8]}",
+                    type="agent",
+                    content="Started a fresh trip workspace. Send new travel links or ask for flights to continue.",
+                    timestamp=datetime.now(),
+                )
+            ],
+            updated_trip=trip,
+        )
+
     trip_id = await workspace_runtime.get_workspace_trip_id(workspace_id)
     trip = await storage.load_trip(trip_id)
 
@@ -643,6 +675,26 @@ async def _invoke_workspace_agent(workspace_id: str, message: str, user_id: str 
         )
 
     return ChatResponse(messages=response_messages, updated_trip=updated_trip)
+
+
+@router.post("/{workspace_id}/restart")
+async def restart_workspace_trip(workspace_id: str):
+    trip = _build_empty_workspace_trip(workspace_id)
+    await storage.save_trip(trip)
+    await workspace_runtime.restart_workspace(workspace_id, title=trip.title)
+    await workspace_runtime.bind_workspace_to_trip(workspace_id, trip.trip_id, title=trip.title)
+    await workspace_runtime.append_event(
+        workspace_id,
+        "agent",
+        "Started a fresh trip workspace. Send new travel links or ask for flights to continue.",
+        {"source": "api", "reset": True},
+    )
+    snapshot = await workspace_runtime.build_workspace_snapshot(workspace_id, trip)
+    return {
+        "workspace_id": workspace_id,
+        "trip_id": trip.trip_id,
+        "snapshot": snapshot,
+    }
 
 
 @router.post("/{workspace_id}/chat", response_model=ChatResponse)

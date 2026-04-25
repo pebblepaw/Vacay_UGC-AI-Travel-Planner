@@ -172,6 +172,79 @@ async def test_workspace_chat_attach_binds_real_trip_then_snapshot(monkeypatch: 
 
 
 @pytest.mark.asyncio
+async def test_workspace_restart_command_starts_fresh_trip(monkeypatch: pytest.MonkeyPatch):
+    workspace_id = "telegram:-10088:main"
+
+    saved_trips: list[Trip] = []
+
+    async def _save_trip(trip: Trip):
+        saved_trips.append(trip)
+        return True
+
+    async def _load_trip(trip_id: str):
+        for trip in reversed(saved_trips):
+            if trip.trip_id == trip_id:
+                return trip
+        return None
+
+    monkeypatch.setattr(
+        workspaces_router,
+        "storage",
+        SimpleNamespace(
+            load_trip=AsyncMock(side_effect=_load_trip),
+            save_trip=AsyncMock(side_effect=_save_trip),
+            list_all_trips=AsyncMock(return_value=[]),
+            seed_placeholder_if_empty=AsyncMock(return_value=None),
+        ),
+    )
+
+    response = await workspaces_router._invoke_workspace_agent(
+        workspace_id,
+        "start over with a fresh trip",
+        user_id="1",
+        source="telegram",
+    )
+    snapshot = await workspaces_router.get_workspace_snapshot(workspace_id, token=None)
+
+    assert response.messages[0].content.startswith("Started a fresh trip workspace")
+    assert saved_trips
+    assert snapshot.trip.trip_id == saved_trips[-1].trip_id
+
+
+@pytest.mark.asyncio
+async def test_workspace_restart_endpoint_returns_new_snapshot(monkeypatch: pytest.MonkeyPatch):
+    workspace_id = "telegram:-10089:main"
+    saved_trips: list[Trip] = []
+
+    async def _save_trip(trip: Trip):
+        saved_trips.append(trip)
+        return True
+
+    async def _load_trip(trip_id: str):
+        for trip in reversed(saved_trips):
+            if trip.trip_id == trip_id:
+                return trip
+        return None
+
+    monkeypatch.setattr(
+        workspaces_router,
+        "storage",
+        SimpleNamespace(
+            load_trip=AsyncMock(side_effect=_load_trip),
+            save_trip=AsyncMock(side_effect=_save_trip),
+            list_all_trips=AsyncMock(return_value=[]),
+            seed_placeholder_if_empty=AsyncMock(return_value=None),
+        ),
+    )
+
+    response = await workspaces_router.restart_workspace_trip(workspace_id)
+
+    assert response["workspace_id"] == workspace_id
+    assert response["trip_id"] == saved_trips[-1].trip_id
+    assert response["snapshot"]["trip"]["trip_id"] == saved_trips[-1].trip_id
+
+
+@pytest.mark.asyncio
 async def test_workspace_chat_rebuilds_snapshot_after_agent_run(monkeypatch: pytest.MonkeyPatch):
     workspace_id = "telegram:-10044:main"
     trip = _make_trip("trip_snapshot_refresh")

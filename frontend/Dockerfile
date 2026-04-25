@@ -1,5 +1,9 @@
 FROM node:20-alpine AS build
 WORKDIR /app
+ARG MAPBOX_PUBLIC
+ARG VITE_API_URL
+ENV MAPBOX_PUBLIC=$MAPBOX_PUBLIC
+ENV VITE_API_URL=$VITE_API_URL
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ .

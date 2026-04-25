@@ -76,3 +76,40 @@ async def test_download_video_short_circuits_tiktok_photo_posts(monkeypatch: pyt
     download_sync_mock.assert_not_called()
     fallback_mock.assert_called_once_with(photo_url)
     assert result == fallback_result
+
+
+@pytest.mark.asyncio
+async def test_download_video_uses_tiktok_html_fallback_for_video_pages(monkeypatch: pytest.MonkeyPatch):
+    service = VideoDownloaderService()
+    video_url = "https://www.tiktok.com/@demo/video/7508677073490185494"
+    fallback_result = {
+        "success": True,
+        "url": video_url,
+        "file_path": "/tmp/video.mp4",
+        "preview_url": "http://127.0.0.1:8000/media/video.mp4",
+        "title": "Sydney skyline reel",
+        "platform": "tiktok",
+        "thumbnail": "http://example.com/thumb.jpg",
+        "description": "Sydney skyline reel",
+    }
+
+    monkeypatch.setattr(
+        service,
+        "_download_sync",
+        Mock(
+            return_value={
+                "success": False,
+                "url": video_url,
+                "error": "Download failed: ERROR: [TikTok] Unable to extract universal data for rehydration",
+                "title": "Unknown",
+                "platform": "tiktok",
+            }
+        ),
+    )
+    fallback_mock = Mock(return_value=fallback_result)
+    monkeypatch.setattr(service, "_download_tiktok_video_page", fallback_mock)
+
+    result = await service.download_video(video_url)
+
+    fallback_mock.assert_called_once_with(video_url)
+    assert result == fallback_result

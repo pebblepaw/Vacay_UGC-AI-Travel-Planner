@@ -117,6 +117,22 @@ def response_formatter_node(state: AgentState) -> dict:
                         "booking.checkout_live_browser_payment",
                         status=booking_result.get("status"),
                     )
+            elif handoff_channel == "remote_browser":
+                if status == "needs_user_input":
+                    formatted = render_copy(
+                        "booking.checkout_remote_browser_user_input",
+                        status=booking_result.get("status"),
+                    )
+                else:
+                    formatted = render_copy(
+                        "booking.checkout_remote_browser_payment",
+                        status=booking_result.get("status"),
+                    )
+                chat_interrupt = {
+                    "interrupt_type": "open_url",
+                    "content": confirmation_url,
+                    "status": "pending",
+                }
             else:
                 if status == "needs_user_input":
                     formatted = render_copy(
@@ -187,6 +203,22 @@ def response_formatter_node(state: AgentState) -> dict:
                         "booking.checkout_live_browser_payment",
                         status=booking_result.get("status"),
                     )
+            elif handoff_channel == "remote_browser":
+                if booking_result.get("status") == "needs_user_input":
+                    formatted = render_copy(
+                        "booking.checkout_remote_browser_user_input",
+                        status=booking_result.get("status"),
+                    )
+                else:
+                    formatted = render_copy(
+                        "booking.checkout_remote_browser_payment",
+                        status=booking_result.get("status"),
+                    )
+                chat_interrupt = {
+                    "interrupt_type": "open_url",
+                    "content": booking_result.get("confirmation_url"),
+                    "status": "pending",
+                }
             else:
                 if booking_result.get("status") == "needs_user_input":
                     formatted = render_copy(
