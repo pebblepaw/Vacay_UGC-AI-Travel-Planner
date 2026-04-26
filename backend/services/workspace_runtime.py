@@ -25,6 +25,7 @@ class WorkspaceRuntimeService:
         self._memory_events: dict[str, list[dict[str, Any]]] = {}
         self._memory_state: dict[str, dict[str, Any]] = {}
         self._subscribers: dict[str, set[asyncio.Queue[dict[str, Any]]]] = {}
+        self._processed_telegram_updates: set[int] = set()
 
     def workspace_id_for_telegram(self, chat_id: int | str, thread_id: int | str | None = None) -> str:
         suffix = thread_id if thread_id is not None else "main"
@@ -281,6 +282,41 @@ class WorkspaceRuntimeService:
         except Exception:
             pass
         return self._memory_state.get(f"memory:{workspace_id}:{user_id or 'workspace'}", {})
+
+    async def claim_telegram_update(
+        self,
+        update_id: int,
+        chat_id: int | str,
+        message_id: int | None,
+        workspace_id: str,
+    ) -> bool:
+        payload = {
+            "update_id": int(update_id),
+            "chat_id": str(chat_id),
+            "message_id": int(message_id) if message_id is not None else None,
+            "workspace_id": workspace_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            existing = (
+                supabase_storage.client.table("telegram_update_receipts")
+                .select("update_id")
+                .eq("update_id", int(update_id))
+                .limit(1)
+                .execute()
+            )
+            if existing.data:
+                return False
+            supabase_storage.client.table("telegram_update_receipts").insert(payload).execute()
+            return True
+        except Exception as exc:
+            message = str(exc).lower()
+            if "duplicate" in message or "already exists" in message or "23505" in message:
+                return False
+            if int(update_id) in self._processed_telegram_updates:
+                return False
+            self._processed_telegram_updates.add(int(update_id))
+            return True
 
     def subscribe(self, workspace_id: str) -> asyncio.Queue[dict[str, Any]]:
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=8)

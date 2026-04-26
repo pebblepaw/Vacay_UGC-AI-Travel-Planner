@@ -31,11 +31,7 @@ describe('BrowserTakeoverPage', () => {
       </MemoryRouter>,
     );
 
-    await waitFor(() => {
-      expect(screen.getByText(/remote browser/i)).toBeInTheDocument();
-    });
-
-    const frame = screen.getByTitle(/vacayclaw remote browser/i);
+    const frame = await screen.findByTitle(/vacayclaw remote browser/i);
     expect(frame).toHaveAttribute('src', 'https://demo.vacay.ai/remote-browser/vnc.html');
     expect(screen.getByText(/traveler page/i)).toBeInTheDocument();
   });

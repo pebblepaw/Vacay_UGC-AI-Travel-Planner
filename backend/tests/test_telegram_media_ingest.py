@@ -60,6 +60,7 @@ async def test_telegram_webhook_imports_urls_before_agent_chat(monkeypatch):
             workspace_id_for_telegram=lambda chat_id, thread_id=None: f"telegram:{chat_id}:{thread_id or 'main'}",
             ensure_workspace=AsyncMock(return_value={}),
             make_share_token=lambda workspace_id: "signed-token",
+            claim_telegram_update=AsyncMock(return_value=True),
         ),
     )
 
@@ -119,3 +120,80 @@ async def test_telegram_webhook_ignores_untagged_group_messages(monkeypatch):
     assert result == {"status": "ignored", "reason": "bot_not_tagged"}
     ingest_mock.assert_not_awaited()
     invoke_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_telegram_webhook_ignores_duplicate_update_ids(monkeypatch):
+    invoke_mock = AsyncMock(return_value=await _chat_response())
+    send_mock = AsyncMock(return_value={"ok": True})
+    seen_updates: set[int] = set()
+
+    async def _claim_update(update_id: int, chat_id: int | str, message_id: int | None, workspace_id: str) -> bool:
+        del chat_id, message_id, workspace_id
+        if update_id in seen_updates:
+            return False
+        seen_updates.add(update_id)
+        return True
+
+    monkeypatch.setattr(telegram_router.settings, "TELEGRAM_WEBHOOK_SECRET", "sec")
+    monkeypatch.setattr(telegram_router.settings, "PUBLIC_WEB_BASE_URL", "https://demo.vacay.ai")
+    monkeypatch.setattr(telegram_router.telegram_bot, "get_username", AsyncMock(return_value="VacayClawBot"))
+    monkeypatch.setattr(telegram_router.telegram_bot, "send_message", send_mock)
+    monkeypatch.setattr(telegram_router, "_invoke_workspace_agent", invoke_mock)
+    monkeypatch.setattr(
+        telegram_router,
+        "workspace_runtime",
+        SimpleNamespace(
+            workspace_id_for_telegram=lambda chat_id, thread_id=None: f"telegram:{chat_id}:{thread_id or 'main'}",
+            ensure_workspace=AsyncMock(return_value={}),
+            make_share_token=lambda workspace_id: "signed-token",
+            claim_telegram_update=AsyncMock(side_effect=_claim_update),
+        ),
+    )
+
+    req = TelegramWebhookRequest(
+        update_id=77,
+        message={
+            "message_id": 501,
+            "text": "@VacayClawBot Shrink it to 2 days",
+            "chat": {"id": -100777, "title": "Vacay", "type": "supergroup"},
+            "from": {"id": 55},
+        },
+    )
+
+    first = await telegram_router.ingest_telegram_webhook(req, x_telegram_bot_api_secret_token="sec")
+    second = await telegram_router.ingest_telegram_webhook(req, x_telegram_bot_api_secret_token="sec")
+
+    assert first["status"] == "processed"
+    assert second == {"status": "ignored", "reason": "duplicate_update"}
+    assert invoke_mock.await_count == 1
+    assert send_mock.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_telegram_webhook_ignores_edited_messages(monkeypatch):
+    monkeypatch.setattr(telegram_router.settings, "TELEGRAM_WEBHOOK_SECRET", "sec")
+
+    ingest_mock = AsyncMock()
+    invoke_mock = AsyncMock()
+    send_mock = AsyncMock()
+    monkeypatch.setattr(telegram_router, "_ingest_workspace_urls", ingest_mock)
+    monkeypatch.setattr(telegram_router, "_invoke_workspace_agent", invoke_mock)
+    monkeypatch.setattr(telegram_router.telegram_bot, "send_message", send_mock)
+
+    req = TelegramWebhookRequest(
+        update_id=99,
+        edited_message={
+            "message_id": 700,
+            "text": "@VacayClawBot Shrink it to 2 days",
+            "chat": {"id": -100777, "title": "Vacay", "type": "supergroup"},
+            "from": {"id": 55},
+        },
+    )
+
+    result = await telegram_router.ingest_telegram_webhook(req, x_telegram_bot_api_secret_token="sec")
+
+    assert result == {"status": "ignored", "reason": "edited_message"}
+    ingest_mock.assert_not_awaited()
+    invoke_mock.assert_not_awaited()
+    send_mock.assert_not_awaited()

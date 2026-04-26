@@ -1,6 +1,6 @@
 # VACAY / VacayClaw - Progress Log
 
-**Current Status (April 23, 2026): Workspace-runtime revamp baseline complete.**
+**Current Status (April 26, 2026): Workspace-runtime demo hardening complete.**
 
 ## Progress Logs (in `docs/progress/`)
 
@@ -21,6 +21,15 @@
 - Share-link signing and token-verified workspace loading now exist.
 - Legacy trip chat endpoint now proxies to workspace runtime.
 - Single-host deployment scaffolding added (`docker-compose.yml`, Dockerfiles, Nginx config).
+
+## Latest Hardening Work (April 26, 2026)
+
+- Telegram now ignores duplicate webhook deliveries by `update_id`.
+- Telegram now ignores edited messages instead of re-running the agent on message edits.
+- Meal insertion now checks the saved itinerary after replanning before claiming success.
+- Browser takeover now keeps the last known URL even after the live session registry entry is gone.
+- Rednote short links from `xhslink.com` now work in both backend detection and frontend ingest UI.
+- Focused backend tests, frontend tests, frontend build, and `scripts/codex/verify.sh` now pass on the active branch.
 
 ## Canonical Planning + Operations Docs
 

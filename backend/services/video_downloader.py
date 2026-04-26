@@ -150,7 +150,7 @@ class VideoDownloaderService:
             return "douyin"
         if "youtube.com" in url_lower or "youtu.be" in url_lower:
             return "youtube"
-        if "xiaohongshu.com" in url_lower or "rednote" in url_lower:
+        if "xiaohongshu.com" in url_lower or "rednote" in url_lower or "xhslink.com" in url_lower:
             return "rednote"
         if "instagram.com" in url_lower:
             return "instagram"

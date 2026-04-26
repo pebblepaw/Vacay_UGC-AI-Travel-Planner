@@ -87,7 +87,10 @@ async def ingest_telegram_webhook(
     if expected and expected != x_telegram_bot_api_secret_token:
         raise HTTPException(status_code=403, detail="Invalid Telegram secret token")
 
-    message = request.message or request.edited_message
+    if request.edited_message and not request.message:
+        return {"status": "ignored", "reason": "edited_message"}
+
+    message = request.message
     if not message:
         return {"status": "ignored", "reason": "no_message"}
 
@@ -107,9 +110,18 @@ async def ingest_telegram_webhook(
     thread_id = message.get("message_thread_id")
     user = message.get("from") or {}
     user_id = str(user.get("id")) if user.get("id") is not None else None
+    message_id = message.get("message_id")
 
     workspace_id = workspace_runtime.workspace_id_for_telegram(chat_id, thread_id)
     await workspace_runtime.ensure_workspace(workspace_id, title=chat.get("title") or "Telegram Workspace")
+    claimed = await workspace_runtime.claim_telegram_update(
+        update_id=request.update_id,
+        chat_id=chat_id,
+        message_id=message_id,
+        workspace_id=workspace_id,
+    )
+    if not claimed:
+        return {"status": "ignored", "reason": "duplicate_update"}
 
     cleaned_text = _strip_bot_mention(text, bot_username)
     urls, prompt = _extract_urls_and_prompt(cleaned_text)

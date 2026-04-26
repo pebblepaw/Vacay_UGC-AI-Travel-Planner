@@ -91,6 +91,7 @@ class LiveBookingSessionRegistry:
         *,
         session_id: str,
         workspace_id: str | None = None,
+        recovery: dict[str, Any] | None = None,
         ttl_seconds: int = 60 * 60,
     ) -> str:
         payload = {
@@ -98,6 +99,8 @@ class LiveBookingSessionRegistry:
             "workspace_id": workspace_id,
             "exp": int(time.time()) + ttl_seconds,
         }
+        if recovery:
+            payload["recovery"] = recovery
         body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
         secret = (settings.SECRET_KEY or "vacayclaw-dev-secret").encode()
         signature = hmac.new(secret, body, hashlib.sha256).hexdigest().encode()

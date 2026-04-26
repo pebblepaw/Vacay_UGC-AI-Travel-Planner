@@ -42,3 +42,11 @@ create table if not exists workspace_snapshots (
   snapshot jsonb not null,
   updated_at timestamptz not null default now()
 );
+
+create table if not exists telegram_update_receipts (
+  update_id bigint primary key,
+  chat_id text not null,
+  message_id bigint null,
+  workspace_id text not null,
+  created_at timestamptz not null default now()
+);

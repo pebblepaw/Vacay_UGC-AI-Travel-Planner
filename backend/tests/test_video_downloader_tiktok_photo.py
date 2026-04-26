@@ -14,6 +14,14 @@ def test_ydl_opts_cap_preview_quality_for_faster_demo_downloads():
     assert opts["format_sort"][0] == "res:540"
 
 
+def test_detect_platform_treats_xhslink_as_rednote():
+    service = VideoDownloaderService()
+
+    platform = service._detect_platform("https://xhslink.com/a/demo123")
+
+    assert platform == "rednote"
+
+
 @pytest.mark.asyncio
 async def test_download_video_uses_tiktok_photo_fallback(monkeypatch: pytest.MonkeyPatch):
     service = VideoDownloaderService()
