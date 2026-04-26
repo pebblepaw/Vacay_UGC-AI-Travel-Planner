@@ -21,6 +21,21 @@ def test_share_token_roundtrip():
     assert verified == workspace_id
 
 
+def test_share_token_is_stable_and_non_expiring_by_default():
+    workspace_id = "telegram:-100111:main"
+
+    token_one = workspace_runtime.make_share_token(workspace_id)
+    token_two = workspace_runtime.make_share_token(workspace_id)
+
+    payload_hex, _signature = token_one.split(".", 1)
+    payload = bytes.fromhex(payload_hex).decode()
+
+    assert token_one == token_two
+    assert '"workspace_id":"telegram:-100111:main"' in payload
+    assert '"exp"' not in payload
+    assert workspace_runtime.verify_share_token(token_one) == workspace_id
+
+
 @pytest.mark.asyncio
 async def test_ensure_workspace_preserves_existing_trip_binding(monkeypatch: pytest.MonkeyPatch):
     stored = {

@@ -11,6 +11,7 @@ ROOT_VOLUME_TYPE="${ROOT_VOLUME_TYPE:-gp3}"
 SUBNET_ID="${SUBNET_ID:-subnet-0369c6fb7c0ec0059}"
 VPC_ID="${VPC_ID:-vpc-029784a350488ad15}"
 SECURITY_GROUP_NAME="${SECURITY_GROUP_NAME:-vacayclaw-demo-ssh}"
+PUBLIC_WEB_BASE_URL="${PUBLIC_WEB_BASE_URL:-${AWS_PUBLIC_BASE_URL:-}}"
 WORK_DIR="${WORK_DIR:-/tmp/vacayclaw-ec2-deploy}"
 
 if [ ! -f "$ENV_FILE" ]; then
@@ -64,6 +65,10 @@ aws ec2 authorize-security-group-ingress \
   --group-id "$SG_ID" \
   --ip-permissions "[{\"IpProtocol\":\"tcp\",\"FromPort\":22,\"ToPort\":22,\"IpRanges\":[{\"CidrIp\":\"${MY_IP}/32\",\"Description\":\"Codex current IP\"}]}]" \
   >/dev/null 2>&1 || true
+aws ec2 authorize-security-group-ingress \
+  --group-id "$SG_ID" \
+  --ip-permissions '[{"IpProtocol":"tcp","FromPort":80,"ToPort":80,"IpRanges":[{"CidrIp":"0.0.0.0/0","Description":"VacayClaw public HTTP origin"}]}]' \
+  >/dev/null 2>&1 || true
 
 aws ec2 create-key-pair --key-name "$KEY_NAME" --query 'KeyMaterial' --output text > "$KEY_PATH"
 chmod 600 "$KEY_PATH"
@@ -84,6 +89,7 @@ aws ec2 wait instance-running --instance-ids "$INSTANCE_ID"
 aws ec2 wait instance-status-ok --instance-ids "$INSTANCE_ID"
 
 PUBLIC_IP="$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)"
+PUBLIC_DNS="$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query 'Reservations[0].Instances[0].PublicDnsName' --output text)"
 ARCHIVE_PATH="$WORK_DIR/vacayclaw.tar.gz"
 
 tar \
@@ -114,18 +120,22 @@ ssh -o StrictHostKeyChecking=accept-new -i "$KEY_PATH" "ec2-user@$PUBLIC_IP" "
   bash deploy/ec2/bootstrap_host.sh
 "
 
-TUNNEL_URL="$(ssh -o StrictHostKeyChecking=accept-new -i "$KEY_PATH" "ec2-user@$PUBLIC_IP" "cd /opt/vacayclaw && bash deploy/ec2/start_stack.sh /opt/vacayclaw /opt/vacayclaw/.env" | tail -n 1)"
-
-REMOTE_BROWSER_URL="${TUNNEL_URL}/remote-browser/vnc.html?autoconnect=true&resize=scale"
+if [ -z "$PUBLIC_WEB_BASE_URL" ]; then
+  PUBLIC_WEB_BASE_URL="http://${PUBLIC_DNS}"
+fi
+PUBLIC_API_BASE_URL="${PUBLIC_API_BASE_URL:-$PUBLIC_WEB_BASE_URL}"
+PUBLIC_REMOTE_BROWSER_URL="${PUBLIC_REMOTE_BROWSER_URL:-${PUBLIC_WEB_BASE_URL}/remote-browser/vnc.html?autoconnect=true&resize=scale}"
+VITE_API_URL="${VITE_API_URL:-}"
 
 ssh -o StrictHostKeyChecking=accept-new -i "$KEY_PATH" "ec2-user@$PUBLIC_IP" "
 python3 - <<'PY'
 from pathlib import Path
 env_path = Path('/opt/vacayclaw/.env')
 updates = {
-    'PUBLIC_WEB_BASE_URL': '${TUNNEL_URL}',
-    'PUBLIC_API_BASE_URL': '${TUNNEL_URL}',
-    'PUBLIC_REMOTE_BROWSER_URL': '${REMOTE_BROWSER_URL}',
+    'PUBLIC_WEB_BASE_URL': '${PUBLIC_WEB_BASE_URL}',
+    'PUBLIC_API_BASE_URL': '${PUBLIC_API_BASE_URL}',
+    'PUBLIC_REMOTE_BROWSER_URL': '${PUBLIC_REMOTE_BROWSER_URL}',
+    'VITE_API_URL': '${VITE_API_URL}',
 }
 lines = env_path.read_text().splitlines()
 seen = set()
@@ -147,20 +157,29 @@ env_path.write_text('\\n'.join(output) + '\\n')
 PY
 cd /opt/vacayclaw &&
 if sudo docker compose version >/dev/null 2>&1; then
-  sudo docker compose --env-file /opt/vacayclaw/.env -f /opt/vacayclaw/docker-compose.yml up -d backend nginx cloudflared
+  sudo docker compose --env-file /opt/vacayclaw/.env -f /opt/vacayclaw/docker-compose.yml up -d backend frontend browser-worker nginx
 else
-  sudo docker-compose --env-file /opt/vacayclaw/.env -f /opt/vacayclaw/docker-compose.yml up -d backend nginx cloudflared
+  sudo docker-compose --env-file /opt/vacayclaw/.env -f /opt/vacayclaw/docker-compose.yml up -d backend frontend browser-worker nginx
 fi
 "
 
-curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
-  -d "url=${TUNNEL_URL}/api/telegram/webhook" \
-  -d "secret_token=${TELEGRAM_WEBHOOK_SECRET}" >/dev/null
+STACK_URL="$(ssh -o StrictHostKeyChecking=accept-new -i "$KEY_PATH" "ec2-user@$PUBLIC_IP" "cd /opt/vacayclaw && bash deploy/ec2/start_stack.sh /opt/vacayclaw /opt/vacayclaw/.env" | tail -n 1)"
+
+if [[ "$PUBLIC_WEB_BASE_URL" =~ ^https:// ]]; then
+  curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
+    -d "url=${PUBLIC_WEB_BASE_URL}/api/telegram/webhook" \
+    -d "secret_token=${TELEGRAM_WEBHOOK_SECRET}" >/dev/null
+else
+  echo "Skipping Telegram webhook registration because PUBLIC_WEB_BASE_URL is not HTTPS: ${PUBLIC_WEB_BASE_URL}" >&2
+fi
 
 cat <<EOF
 INSTANCE_ID=$INSTANCE_ID
 PUBLIC_IP=$PUBLIC_IP
+PUBLIC_DNS=$PUBLIC_DNS
 SSH_KEY=$KEY_PATH
-TUNNEL_URL=$TUNNEL_URL
-REMOTE_BROWSER_URL=$REMOTE_BROWSER_URL
+PUBLIC_WEB_BASE_URL=$PUBLIC_WEB_BASE_URL
+PUBLIC_API_BASE_URL=$PUBLIC_API_BASE_URL
+PUBLIC_REMOTE_BROWSER_URL=$PUBLIC_REMOTE_BROWSER_URL
+STACK_URL=$STACK_URL
 EOF

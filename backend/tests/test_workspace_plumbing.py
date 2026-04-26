@@ -15,6 +15,7 @@ from backend.models.schemas import (
     TelegramWebhookRequest,
     Trip,
     VideoProcessRequest,
+    WorkspaceChatRequest,
 )
 from backend.routers import telegram as telegram_router
 from backend.routers import workspaces as workspaces_router
@@ -1349,3 +1350,33 @@ async def test_telegram_webhook_sends_outbound_reply(monkeypatch: pytest.MonkeyP
     assert payload["message_thread_id"] == 777
     assert "Workspace:" in payload["text"]
     assert "Options:" in payload["text"]
+
+
+@pytest.mark.asyncio
+async def test_workspace_chat_mirrors_web_turn_back_to_telegram(monkeypatch: pytest.MonkeyPatch):
+    workspace_id = "telegram:-10077:main"
+    send_mock = AsyncMock(return_value={"ok": True})
+    response = ChatResponse(
+        messages=[
+            ChatMessage(id="u1", type="user", content="Shrink it to 2 days", timestamp="2026-04-24T00:00:00Z"),
+            ChatMessage(id="a1", type="agent", content="Resized trip to 2 days.", timestamp="2026-04-24T00:00:01Z"),
+        ],
+        updated_trip=None,
+    )
+
+    monkeypatch.setattr(workspaces_router, "_invoke_workspace_agent", AsyncMock(return_value=response))
+    monkeypatch.setattr(workspaces_router, "telegram_bot", SimpleNamespace(enabled=True, send_message=send_mock), raising=False)
+
+    result = await workspaces_router.send_workspace_message(
+        workspace_id,
+        WorkspaceChatRequest(message="Shrink it to 2 days", user_id="web-user-1", source="web"),
+    )
+
+    assert result.messages[1].content == "Resized trip to 2 days."
+    assert send_mock.await_count == 2
+    first_payload = send_mock.await_args_list[0].kwargs
+    second_payload = send_mock.await_args_list[1].kwargs
+    assert first_payload["chat_id"] == -10077
+    assert first_payload["text"] == "Web user: Shrink it to 2 days"
+    assert second_payload["chat_id"] == -10077
+    assert "Resized trip to 2 days." in second_payload["text"]

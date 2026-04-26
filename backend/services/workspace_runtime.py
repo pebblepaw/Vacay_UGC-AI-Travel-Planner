@@ -452,10 +452,17 @@ class WorkspaceRuntimeService:
             return None
         return self._normalize_snapshot_media_urls(cached)
 
-    def make_share_token(self, workspace_id: str, ttl_seconds: int = 60 * 60 * 24) -> str:
-        """Create a signed handoff token (no full auth, but scoped and expiring)."""
-        exp = int(datetime.now(tz=timezone.utc).timestamp()) + ttl_seconds
-        body = json.dumps({"workspace_id": workspace_id, "exp": exp}, separators=(",", ":")).encode()
+    def make_share_token(self, workspace_id: str, ttl_seconds: int | None = None) -> str:
+        """Create a signed workspace token.
+
+        Default tokens are stable and non-expiring so one workspace keeps one
+        durable share URL. Explicit TTLs remain available for tests and any
+        short-lived compatibility flows.
+        """
+        payload: dict[str, Any] = {"workspace_id": workspace_id}
+        if ttl_seconds is not None:
+            payload["exp"] = int(datetime.now(tz=timezone.utc).timestamp()) + ttl_seconds
+        body = json.dumps(payload, separators=(",", ":")).encode()
         secret = (settings.SECRET_KEY or "vacayclaw-dev-secret").encode()
         sig = hmac.new(secret, body, hashlib.sha256).hexdigest()
         return f"{body.hex()}.{sig}"
@@ -469,7 +476,8 @@ class WorkspaceRuntimeService:
             if not hmac.compare_digest(expected, sig):
                 return None
             data = json.loads(body.decode())
-            if int(data.get("exp", 0)) < int(datetime.now(tz=timezone.utc).timestamp()):
+            expires_at = data.get("exp")
+            if expires_at is not None and int(expires_at) < int(datetime.now(tz=timezone.utc).timestamp()):
                 return None
             return str(data["workspace_id"])
         except Exception:

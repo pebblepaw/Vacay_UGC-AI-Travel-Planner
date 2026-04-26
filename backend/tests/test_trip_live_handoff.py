@@ -427,7 +427,7 @@ def test_trip_checkout_advances_results_fare_modal_when_primary_button_has_no_te
     fill_mock.assert_not_awaited()
 
 
-def test_checkout_returns_signed_takeover_page_for_remote_browser_handoff(monkeypatch) -> None:
+def test_checkout_prefers_direct_confirmation_url_over_remote_browser_handoff(monkeypatch) -> None:
     runner = PlaywrightCheckoutRunner()
     fake_page = FakeSearchPage()
     fake_browser = FakeBrowser(fake_page)
@@ -490,13 +490,13 @@ def test_checkout_returns_signed_takeover_page_for_remote_browser_handoff(monkey
     )
 
     assert result["status"] == "needs_user_input"
-    assert result["handoff_channel"] == "remote_browser"
-    assert result["confirmation_url"] == "https://demo.vacay.ai/browser?token=signed-browser-token"
+    assert result["handoff_channel"] == "direct_url"
+    assert result["confirmation_url"] == "https://www.trip.com/flights/passenger?booking=remote-123"
 
     asyncio.run(live_booking_sessions.close(session.session_id))
 
 
-def test_checkout_reconnects_remote_browser_when_live_session_registry_is_empty(monkeypatch) -> None:
+def test_checkout_reconnects_remote_browser_session_but_keeps_direct_confirmation_url(monkeypatch) -> None:
     runner = PlaywrightCheckoutRunner()
     fake_page = FakeSearchPage()
     fake_async_playwright = FakeAsyncPlaywright(fake_page)
@@ -552,8 +552,8 @@ def test_checkout_reconnects_remote_browser_when_live_session_registry_is_empty(
     )
 
     assert result["status"] == "needs_user_input"
-    assert result["handoff_channel"] == "remote_browser"
-    assert result["confirmation_url"] == "https://demo.vacay.ai/browser?token=reconnected"
+    assert result["handoff_channel"] == "direct_url"
+    assert result["confirmation_url"] == "https://www.trip.com/flights/passenger?booking=remote-reconnect"
     assert fake_async_playwright.chromium.cdp_endpoint == "http://browser-worker:9222"
 
     for session_id in list(live_booking_sessions._sessions.keys()):
