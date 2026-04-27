@@ -59,6 +59,7 @@ Thumbs.db
 coverage/
 .coverage
 htmlcov/
+.playwright-cli/
 archive/
 
 # Temporary
@@ -83,6 +84,7 @@ Demo/*
 !README.md
 !BRD.md
 !PROGRESS.md
+!QUICKSTART.md
 !AGENTS.md
 !23_Apr_Report.md
 !docs/**/*.md

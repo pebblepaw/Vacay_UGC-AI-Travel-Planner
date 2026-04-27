@@ -34,7 +34,7 @@ async def _chat_response() -> ChatResponse:
 
 
 @pytest.mark.asyncio
-async def test_telegram_webhook_imports_urls_before_agent_chat(monkeypatch):
+async def test_telegram_webhook_imports_urls_and_replies_with_import_summary(monkeypatch):
     ingest_mock = AsyncMock(
         return_value={
             "workspace_id": "telegram:-100777:main",
@@ -44,7 +44,6 @@ async def test_telegram_webhook_imports_urls_before_agent_chat(monkeypatch):
             "failed_count": 0,
         }
     )
-    invoke_mock = AsyncMock(return_value=await _chat_response())
     send_mock = AsyncMock(return_value={"ok": True})
 
     monkeypatch.setattr(telegram_router.settings, "TELEGRAM_WEBHOOK_SECRET", "sec")
@@ -52,7 +51,6 @@ async def test_telegram_webhook_imports_urls_before_agent_chat(monkeypatch):
     monkeypatch.setattr(telegram_router.telegram_bot, "get_username", AsyncMock(return_value="VacayClawBot"))
     monkeypatch.setattr(telegram_router.telegram_bot, "send_message", send_mock)
     monkeypatch.setattr(telegram_router, "_ingest_workspace_urls", ingest_mock)
-    monkeypatch.setattr(telegram_router, "_invoke_workspace_agent", invoke_mock)
     monkeypatch.setattr(
         telegram_router,
         "workspace_runtime",
@@ -86,13 +84,134 @@ async def test_telegram_webhook_imports_urls_before_agent_chat(monkeypatch):
             "https://www.instagram.com/reel/2",
         ],
     )
+    assert result["status"] == "processed"
+    assert "Imported 2 media link(s)." in result["response_preview"]
+    assert result["sent_to_telegram"] is True
+
+
+@pytest.mark.asyncio
+async def test_telegram_webhook_url_import_turn_skips_followup_graph_chat(monkeypatch):
+    ingest_mock = AsyncMock(
+        return_value={
+            "workspace_id": "telegram:-100777:main",
+            "trip_id": "trip_media",
+            "snapshot": {"trip": {"trip_id": "trip_media"}},
+            "imported_count": 4,
+            "failed_count": 0,
+        }
+    )
+    invoke_mock = AsyncMock(return_value=await _chat_response())
+    send_mock = AsyncMock(return_value={"ok": True})
+
+    monkeypatch.setattr(telegram_router.settings, "TELEGRAM_WEBHOOK_SECRET", "sec")
+    monkeypatch.setattr(telegram_router.settings, "PUBLIC_WEB_BASE_URL", "https://demo.vacay.ai")
+    monkeypatch.setattr(telegram_router.telegram_bot, "get_username", AsyncMock(return_value="VacayClawBot"))
+    monkeypatch.setattr(telegram_router.telegram_bot, "send_message", send_mock)
+    monkeypatch.setattr(telegram_router, "_ingest_workspace_urls", ingest_mock)
+    monkeypatch.setattr(telegram_router, "_invoke_workspace_agent", invoke_mock)
+    monkeypatch.setattr(
+        telegram_router,
+        "workspace_runtime",
+        SimpleNamespace(
+            workspace_id_for_telegram=lambda chat_id, thread_id=None: f"telegram:{chat_id}:{thread_id or 'main'}",
+            ensure_workspace=AsyncMock(return_value={}),
+            make_share_token=lambda workspace_id: "signed-token",
+            claim_telegram_update=AsyncMock(return_value=True),
+        ),
+    )
+
+    req = TelegramWebhookRequest(
+        update_id=3,
+        message={
+            "text": (
+                "@VacayClawBot Plan a 3-day trip from these TikToks "
+                "https://www.tiktok.com/@one/video/1 "
+                "https://www.instagram.com/reel/2 "
+                "https://www.youtube.com/watch?v=abc123 "
+                "https://www.xiaohongshu.com/explore/demo"
+            ),
+            "chat": {"id": -100777, "title": "Vacay", "type": "supergroup"},
+            "from": {"id": 55},
+        },
+    )
+
+    result = await telegram_router.ingest_telegram_webhook(req, x_telegram_bot_api_secret_token="sec")
+
+    ingest_mock.assert_awaited_once()
+    invoke_mock.assert_not_awaited()
+    assert result["status"] == "processed"
+    assert "Imported 4 media link(s)." in result["response_preview"]
+    assert result["response_preview"].count("Imported 4 media link(s).") == 1
+    assert result["sent_to_telegram"] is True
+
+
+@pytest.mark.asyncio
+async def test_telegram_webhook_url_import_turn_runs_followup_agent_for_add_this_prompt(monkeypatch):
+    ingest_mock = AsyncMock(
+        return_value={
+            "workspace_id": "telegram:-100777:main",
+            "trip_id": "trip_media",
+            "snapshot": {"trip": {"trip_id": "trip_media"}},
+            "imported_count": 1,
+            "failed_count": 0,
+        }
+    )
+    invoke_mock = AsyncMock(
+        return_value=ChatResponse(
+            messages=[
+                ChatMessage(
+                    id="a1",
+                    type="agent",
+                    content="✅ Added 'Westpac Open Air cinema' (ID: poi_cinema) to Day 2.",
+                    timestamp="2026-04-25T00:00:01Z",
+                )
+            ],
+            updated_trip=None,
+        )
+    )
+    send_mock = AsyncMock(return_value={"ok": True})
+
+    monkeypatch.setattr(telegram_router.settings, "TELEGRAM_WEBHOOK_SECRET", "sec")
+    monkeypatch.setattr(telegram_router.settings, "PUBLIC_WEB_BASE_URL", "https://demo.vacay.ai")
+    monkeypatch.setattr(telegram_router.telegram_bot, "get_username", AsyncMock(return_value="VacayClawBot"))
+    monkeypatch.setattr(telegram_router.telegram_bot, "send_message", send_mock)
+    monkeypatch.setattr(telegram_router, "_ingest_workspace_urls", ingest_mock)
+    monkeypatch.setattr(telegram_router, "_invoke_workspace_agent", invoke_mock)
+    monkeypatch.setattr(
+        telegram_router,
+        "workspace_runtime",
+        SimpleNamespace(
+            workspace_id_for_telegram=lambda chat_id, thread_id=None: f"telegram:{chat_id}:{thread_id or 'main'}",
+            ensure_workspace=AsyncMock(return_value={}),
+            make_share_token=lambda workspace_id: "signed-token",
+            claim_telegram_update=AsyncMock(return_value=True),
+        ),
+    )
+
+    req = TelegramWebhookRequest(
+        update_id=4,
+        message={
+            "text": (
+                "@VacayClawBot Add this cinema "
+                "https://www.tiktok.com/@demo/video/cinema"
+            ),
+            "chat": {"id": -100777, "title": "Vacay", "type": "supergroup"},
+            "from": {"id": 55},
+        },
+    )
+
+    result = await telegram_router.ingest_telegram_webhook(req, x_telegram_bot_api_secret_token="sec")
+
+    ingest_mock.assert_awaited_once()
     invoke_mock.assert_awaited_once_with(
         workspace_id="telegram:-100777:main",
-        message="Plan a 3-day trip from these TikToks",
+        message="Add this cinema",
         user_id="55",
         source="telegram",
     )
     assert result["status"] == "processed"
+    assert "Imported 1 media link(s)." in result["response_preview"]
+    assert "Westpac Open Air cinema" in result["response_preview"]
     assert result["sent_to_telegram"] is True
 
 

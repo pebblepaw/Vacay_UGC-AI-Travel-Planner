@@ -1,7 +1,7 @@
 import json
 from datetime import date
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from backend.agent.nodes import booking_agent as booking_agent_module
 from backend.models.schemas import Accommodation, Day, POI, SourceVideo, Trip
@@ -446,6 +446,63 @@ def test_booking_agent_does_not_repeat_stale_failure_on_new_user_turn(monkeypatc
     assert result["messages"][0].tool_calls[0]["name"] == "find_booking_options"
 
 
+def test_booking_agent_uses_latest_human_turn_after_booking_tool_failure(monkeypatch) -> None:
+    monkeypatch.setattr(
+        booking_agent_module,
+        "normalize_booking_intent",
+        lambda **kwargs: BookingIntent(
+            booking_type="flight",
+            provider_hint="trip.com",
+            origin="Singapore Changi Airport",
+            destination="Sydney",
+            departure_date="2026-05-02",
+            return_date="2026-05-04",
+            trip_type="round_trip",
+            adults=2,
+            origin_source="user",
+            destination_source="user",
+            departure_date_source="user",
+            trip_type_source="user",
+            adults_source="user",
+            missing_fields=[],
+            can_search=True,
+            follow_up_question="",
+        ),
+    )
+
+    state = {
+        "messages": [
+            HumanMessage(content="Book a flight to Sydney for 2 pax, on the weekend of 2nd to 4th May"),
+            ToolMessage(
+                content=(
+                    "Trip.com real-time fetch returned no actionable offers. "
+                    "Please ask the user to refine inputs."
+                ),
+                tool_call_id="tool_booking",
+            ),
+        ],
+        "trip": make_trip(),
+        "plan": [],
+        "current_step": 0,
+        "critique": "",
+        "booking_context": {
+            "attempted": True,
+            "last_error": "navigation timeout",
+            "provider_hint": "trip.com",
+        },
+        "booking_offers": [],
+        "selected_offer": {},
+        "booking_result": {},
+    }
+
+    result = booking_agent_module.booking_agent_node(state)
+    response = result["messages"][0]
+
+    assert not getattr(response, "tool_calls", None)
+    assert "trip.com" in response.content.lower()
+    assert "please share" in response.content.lower()
+
+
 def test_booking_agent_opens_checkout_in_visible_browser_after_selection() -> None:
     state = {
         "messages": [HumanMessage(content="Book offer_1.")],
@@ -478,9 +535,141 @@ def test_booking_agent_opens_checkout_in_visible_browser_after_selection() -> No
     assert tool_call["args"]["headless"] is False
 
 
-def test_booking_agent_auto_selects_cheapest_offer_for_book_intent() -> None:
+def test_booking_agent_retries_checkout_after_failed_attempt_when_user_asks_continue() -> None:
+    state = {
+        "messages": [HumanMessage(content="Continue now that I solved the CAPTCHA")],
+        "trip": make_trip(),
+        "plan": [],
+        "current_step": 0,
+        "critique": "",
+        "booking_context": {"explicit_selection": True, "checkout_status": "failed"},
+        "booking_offers": [
+            {
+                "id": "offer_1",
+                "title": "Demo Flight",
+                "price": 199.0,
+                "currency": "USD",
+            }
+        ],
+        "selected_offer": {
+            "id": "offer_1",
+            "title": "Demo Flight",
+            "price": 199.0,
+            "currency": "USD",
+        },
+        "booking_result": {
+            "status": "failed",
+            "reason": "Still on search results page; checkout form not reached.",
+        },
+    }
+
+    result = booking_agent_module.booking_agent_node(state)
+    tool_call = result["messages"][0].tool_calls[0]
+
+    assert tool_call["name"] == "proceed_checkout"
+    assert tool_call["args"]["headless"] is False
+    assert tool_call["args"]["allow_empty_traveler"] is True
+    assert result["booking_context"]["checkout_retry_turn_key"]
+
+
+def test_booking_agent_does_not_retry_checkout_twice_for_same_user_message() -> None:
+    retry_message = "Continue now that I solved the CAPTCHA"
+    state = {
+        "messages": [HumanMessage(content=retry_message)],
+        "trip": make_trip(),
+        "plan": [],
+        "current_step": 0,
+        "critique": "",
+        "booking_context": {
+            "explicit_selection": True,
+            "checkout_status": "failed",
+            "checkout_retry_turn_key": booking_agent_module._checkout_retry_turn_key(retry_message),
+        },
+        "booking_offers": [
+            {
+                "id": "offer_1",
+                "title": "Demo Flight",
+                "price": 199.0,
+                "currency": "USD",
+            }
+        ],
+        "selected_offer": {
+            "id": "offer_1",
+            "title": "Demo Flight",
+            "price": 199.0,
+            "currency": "USD",
+        },
+        "booking_result": {
+            "status": "failed",
+            "reason": "Live session is no longer available.",
+        },
+    }
+
+    result = booking_agent_module.booking_agent_node(state)
+    response = result["messages"][0]
+
+    assert not getattr(response, "tool_calls", None)
+
+
+def test_booking_agent_force_refreshes_booking_search_after_live_session_loss(monkeypatch) -> None:
+    monkeypatch.setattr(
+        booking_agent_module,
+        "normalize_booking_intent",
+        lambda **kwargs: BookingIntent(
+            is_booking_request=True,
+            booking_type="flight",
+            provider_hint="trip.com",
+            origin="Singapore",
+            origin_code="SIN",
+            origin_city_code="SIN",
+            destination="Sydney",
+            destination_code="SYD",
+            destination_city_code="SYD",
+            departure_date="2026-05-02",
+            return_date="2026-05-04",
+            trip_type="round_trip",
+            adults=2,
+            cabin="economy",
+            budget_limit=0.0,
+            origin_source="user",
+            destination_source="user",
+            departure_date_source="user",
+            trip_type_source="user",
+            adults_source="user",
+            missing_fields=[],
+            can_search=True,
+            follow_up_question="",
+        ),
+    )
     state = {
         "messages": [HumanMessage(content="Book a flight to Sydney for 2 pax, on the weekend of 2nd to 4th May")],
+        "trip": make_trip(),
+        "plan": [],
+        "current_step": 0,
+        "critique": "",
+        "booking_context": {
+            "explicit_selection": True,
+            "checkout_status": "failed",
+            "last_error": "This fare only had a live session handle. The live session is no longer available.",
+        },
+        "booking_offers": [{"id": "offer_1", "title": "Stale offer"}],
+        "selected_offer": {"id": "offer_1", "title": "Stale offer"},
+        "booking_result": {
+            "status": "failed",
+            "reason": "This fare only had a live session handle. The live session is no longer available.",
+        },
+    }
+
+    result = booking_agent_module.booking_agent_node(state)
+    tool_call = result["messages"][0].tool_calls[0]
+
+    assert tool_call["name"] == "find_booking_options"
+    assert tool_call["args"]["force_refresh"] is True
+
+
+def test_booking_agent_selects_numbered_offer_from_natural_reply() -> None:
+    state = {
+        "messages": [HumanMessage(content="Let's go with 1")],
         "trip": make_trip(),
         "plan": [],
         "current_step": 0,
@@ -498,4 +687,28 @@ def test_booking_agent_auto_selects_cheapest_offer_for_book_intent() -> None:
     tool_call = result["messages"][0].tool_calls[0]
 
     assert tool_call["name"] == "select_booking_option"
-    assert tool_call["args"]["option_id"] == "offer_1"
+    assert tool_call["args"]["option_id"] == "offer_2"
+
+
+def test_booking_agent_does_not_auto_select_cheapest_offer_for_book_intent() -> None:
+    state = {
+        "messages": [HumanMessage(content="Book a flight to Sydney for 2 pax, on the weekend of 2nd to 4th May")],
+        "trip": make_trip(),
+        "plan": [],
+        "current_step": 0,
+        "critique": "",
+        "booking_context": {"provider_hint": "trip.com"},
+        "booking_offers": [
+            {"id": "offer_2", "title": "Late flight", "price": 320.0, "currency": "USD"},
+            {"id": "offer_1", "title": "Early flight", "price": 199.0, "currency": "USD"},
+        ],
+        "selected_offer": {},
+        "booking_result": {},
+    }
+
+    result = booking_agent_module.booking_agent_node(state)
+    response = result["messages"][0]
+
+    assert not getattr(response, "tool_calls", None)
+    assert "choose" in response.content.lower()
+    assert "option" in response.content.lower()

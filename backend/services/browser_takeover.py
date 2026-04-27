@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 from backend.config import settings
 from backend.services.automation.live_booking_sessions import live_booking_sessions
@@ -11,6 +11,27 @@ from backend.services.workspace_runtime import workspace_runtime
 
 
 class BrowserTakeoverService:
+    def _build_embed_url(self, raw_url: str) -> str:
+        if not raw_url:
+            return ""
+        parsed = urlsplit(raw_url)
+        params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        if "path" not in params:
+            params["path"] = (
+                "remote-browser/websockify"
+                if parsed.path.startswith("/remote-browser/")
+                else "websockify"
+            )
+        return urlunsplit(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path,
+                urlencode(params),
+                parsed.fragment,
+            )
+        )
+
     @property
     def enabled(self) -> bool:
         return bool(settings.PUBLIC_WEB_BASE_URL and settings.PUBLIC_REMOTE_BROWSER_URL)
@@ -23,7 +44,7 @@ class BrowserTakeoverService:
     ) -> str:
         session = await live_booking_sessions.get(session_id)
         recovery: dict[str, Any] = {}
-        if session is not None:
+        if session is not None and not workspace_id:
             try:
                 recovery["current_url"] = str(session.page.url or "")
             except Exception:
@@ -70,7 +91,7 @@ class BrowserTakeoverService:
             "workspace_id": workspace_id,
             "active": active,
             "current_url": current_url,
-            "embed_url": settings.PUBLIC_REMOTE_BROWSER_URL or "",
+            "embed_url": self._build_embed_url(settings.PUBLIC_REMOTE_BROWSER_URL or ""),
         }
 
 

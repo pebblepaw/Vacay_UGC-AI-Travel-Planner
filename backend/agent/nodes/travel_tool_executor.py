@@ -62,7 +62,11 @@ LUNCH_WINDOW = (11 * 60 + 30, 14 * 60 + 30)
 DINNER_WINDOW = (18 * 60, 22 * 60)
 MAX_CLUSTER_POIS_PER_DAY = 4
 MAX_CLUSTER_MOVE_KM = 25.0
-OVERPASS_INTERPRETER_URL = "https://overpass.kumi.systems/api/interpreter"
+OVERPASS_INTERPRETER_URLS = [
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass-api.de/api/interpreter",
+    "https://lz4.overpass-api.de/api/interpreter",
+]
 GENERIC_PLACE_RESULT_TOKENS = (
     "best ",
     "top ",
@@ -682,6 +686,109 @@ def _pick_named_place_result(results: list[dict], anchor_coords: tuple[float, fl
     return valid_results[0]
 
 
+def _reverse_geocode_anchor_sync(anchor_coords: tuple[float, float] | None) -> str:
+    if not anchor_coords:
+        return ""
+
+    lon, lat = anchor_coords
+    try:
+        with httpx.Client() as client:
+            response = client.get(
+                "https://nominatim.openstreetmap.org/reverse",
+                params={
+                    "lon": lon,
+                    "lat": lat,
+                    "format": "jsonv2",
+                    "zoom": 16,
+                    "addressdetails": 1,
+                },
+                headers={"User-Agent": "VACAY-Travel-Planner/1.0"},
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            payload = response.json()
+    except Exception as exc:
+        logger.warning("Reverse geocoding failed for %s: %s", anchor_coords, exc)
+        return ""
+
+    address = payload.get("address") or {}
+    locality = (
+        address.get("suburb")
+        or address.get("neighbourhood")
+        or address.get("quarter")
+        or address.get("city_district")
+        or address.get("town")
+        or address.get("village")
+    )
+    city = address.get("city") or address.get("town") or address.get("state_district") or address.get("state")
+    country = address.get("country")
+
+    parts = [part for part in (locality, city, country) if part]
+    return ", ".join(parts)
+
+
+def _search_places_nearby_text_fallback_sync(
+    anchor_coords: tuple[float, float] | None,
+    meal_type: str,
+    cuisine_hint: str = "",
+) -> list[dict]:
+    if not anchor_coords:
+        return []
+
+    anchor_label = _reverse_geocode_anchor_sync(anchor_coords)
+    if not anchor_label:
+        return []
+
+    query_parts = [meal_type.strip().lower(), "restaurants near", anchor_label]
+    if cuisine_hint.strip():
+        query_parts.insert(0, cuisine_hint.strip())
+    query = " ".join(part for part in query_parts if part).strip()
+
+    try:
+        with DDGS() as ddgs:
+            raw_results = list(ddgs.text(query, max_results=8))
+    except Exception as exc:
+        logger.warning("Text fallback place lookup failed for %s around %s: %s", meal_type, anchor_label, exc)
+        return []
+
+    fallback_results: list[dict] = []
+    for raw_result in raw_results:
+        raw_name = str(raw_result.get("title") or "").strip()
+        if not raw_name:
+            continue
+
+        name = raw_name.split(" | ", maxsplit=1)[0].split(" - ", maxsplit=1)[0].strip()
+        if _looks_like_generic_place_result(name):
+            continue
+
+        coords = _auto_geocode(name, anchor_label)
+        if not coords:
+            continue
+
+        distance_km = haversine_km(coords, anchor_coords)
+        if distance_km > 6.0:
+            continue
+
+        fallback_results.append(
+            {
+                "name": name,
+                "amenity": "restaurant",
+                "description": str(raw_result.get("body") or f"{meal_type.title()} stop near {anchor_label}").strip(),
+                "coords": [coords[0], coords[1]],
+                "url": str(raw_result.get("href") or "").strip(),
+                "image": "",
+            }
+        )
+
+    return sorted(
+        fallback_results,
+        key=lambda item: (
+            haversine_km((item["coords"][0], item["coords"][1]), anchor_coords),
+            str(item.get("name") or "").lower(),
+        ),
+    )
+
+
 def _search_places_nearby_sync(
     anchor_coords: tuple[float, float] | None,
     meal_type: str,
@@ -718,19 +825,32 @@ def _search_places_nearby_sync(
         "brunch": {"cafe": 0, "restaurant": 1, "bakery": 2, "fast_food": 3},
     }.get(meal_type.lower(), {"restaurant": 0, "cafe": 1, "pub": 2, "bar": 3, "fast_food": 4})
 
-    try:
-        with httpx.Client() as client:
-            response = client.get(
-                OVERPASS_INTERPRETER_URL,
-                params={"data": query},
-                headers={"User-Agent": "VACAY-Travel-Planner/1.0", "Accept": "application/json"},
-                timeout=15.0,
+    payload = None
+    last_exception: Exception | None = None
+    for endpoint_url in OVERPASS_INTERPRETER_URLS:
+        try:
+            with httpx.Client() as client:
+                response = client.get(
+                    endpoint_url,
+                    params={"data": query},
+                    headers={"User-Agent": "VACAY-Travel-Planner/1.0", "Accept": "application/json"},
+                    timeout=15.0,
+                )
+                response.raise_for_status()
+                payload = response.json()
+                break
+        except Exception as exc:
+            last_exception = exc
+            logger.warning(
+                "Nearby place lookup failed for %s around %s via %s: %s",
+                meal_type,
+                anchor_coords,
+                endpoint_url,
+                exc,
             )
-            response.raise_for_status()
-            payload = response.json()
-    except Exception as exc:
-        logger.warning("Nearby place lookup failed for %s around %s: %s", meal_type, anchor_coords, exc)
-        return []
+
+    if payload is None:
+        return _search_places_nearby_text_fallback_sync(anchor_coords, meal_type, cuisine_hint=cuisine_hint)
 
     results: list[dict] = []
     for item in payload.get("elements", []):
@@ -775,7 +895,7 @@ def _search_places_nearby_sync(
         if item.get("name") and not _looks_like_generic_place_result(str(item.get("name")))
     ]
 
-    return sorted(
+    ranked_results = sorted(
         filtered_results,
         key=lambda item: (
             amenity_rank.get(str(item.get("amenity") or ""), 99),
@@ -783,6 +903,10 @@ def _search_places_nearby_sync(
             str(item.get("name") or "").lower(),
         ),
     )
+    if ranked_results:
+        return ranked_results
+
+    return _search_places_nearby_text_fallback_sync(anchor_coords, meal_type, cuisine_hint=cuisine_hint)
 
 
 def _select_meal_anchor(day: Day, meal_type: str) -> POI | None:
@@ -958,7 +1082,7 @@ def _drop_remote_outlier_pois(pois: list[POI], target_days: int) -> tuple[list[P
         target_days_are_full = (
             len(remaining) >= target_days * MAX_CLUSTER_POIS_PER_DAY
             and bool(target_clusters)
-            and all(cluster_items and len(cluster_items) >= MAX_CLUSTER_POIS_PER_DAY for cluster_items in target_clusters)
+            and any(len(cluster_items) > MAX_CLUSTER_POIS_PER_DAY for cluster_items in target_clusters)
         )
 
         if nearest_distance < MAX_CLUSTER_MOVE_KM * 2:
@@ -994,6 +1118,23 @@ def _execute_resize_trip(trip: Trip, target_days: int) -> tuple[Trip, str]:
 
     cluster_count = min(target_days, len(all_pois))
     clusters = _balance_clusters(_geographic_cluster(all_pois, cluster_count))
+    overload_drops: list[str] = []
+    for cluster in clusters:
+        while len(cluster) > MAX_CLUSTER_POIS_PER_DAY:
+            avg_lon = sum(poi.coords[0] for poi in cluster) / len(cluster)
+            avg_lat = sum(poi.coords[1] for poi in cluster) / len(cluster)
+            cluster_centroid = (avg_lon, avg_lat)
+            drop_candidate = max(
+                cluster,
+                key=lambda poi: (
+                    poi.priority != "high",
+                    haversine_km(poi.coords, cluster_centroid),
+                    poi.name.lower(),
+                ),
+            )
+            cluster.remove(drop_candidate)
+            overload_drops.append(drop_candidate.name)
+    dropped_names.extend(overload_drops)
     if target_days > cluster_count:
         clusters.extend([[] for _ in range(target_days - cluster_count)])
 
@@ -1185,7 +1326,7 @@ def _balance_clusters(clusters: list[list[POI]]) -> list[list[POI]]:
             if best_move is None or distance < best_move[0]:
                 best_move = (distance, target_idx, candidate)
 
-        if best_move is None or best_move[0] > MAX_CLUSTER_MOVE_KM:
+        if best_move is None or best_move[0] > (MAX_CLUSTER_MOVE_KM * 0.25):
             break
 
         _, target_idx, best_poi = best_move

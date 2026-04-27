@@ -13,6 +13,7 @@ from typing import Any
 
 from backend.services.browser_takeover import browser_takeover_service
 from backend.services.automation.live_booking_sessions import live_booking_sessions
+from backend.services.automation.remote_cdp import resolve_remote_cdp_url
 from backend.config import settings
 
 
@@ -118,6 +119,7 @@ class PlaywrightCheckoutRunner:
         remote_cdp_url = str(getattr(settings, "REMOTE_BROWSER_CDP_URL", "") or "").strip()
         if not remote_cdp_url:
             return None
+        remote_cdp_url = resolve_remote_cdp_url(remote_cdp_url)
 
         try:
             from playwright.async_api import async_playwright as imported_async_playwright
@@ -210,6 +212,19 @@ class PlaywrightCheckoutRunner:
             await page.screenshot(path=str(after_path), full_page=True)
 
             if self._is_results_page(page.url):
+                if await self._has_provider_verification_wall(page):
+                    return {
+                        "status": "needs_user_input",
+                        "reason": (
+                            "CAPTCHA encountered. Trip.com requires verification before checkout. "
+                            "Open this page, complete the verification, then continue."
+                        ),
+                        "confirmation_url": page.url,
+                        "current_browser_url": page.url,
+                        "handoff_channel": "provider_verification",
+                        "screenshot": str(after_path),
+                        "artifacts": [str(before_path), str(after_path)],
+                    }
                 return {
                     "status": "failed",
                     "reason": "Still on search results page; checkout form not reached.",
@@ -234,7 +249,15 @@ class PlaywrightCheckoutRunner:
             }
             if using_live_browser or not headless:
                 direct_confirmation_url = str(page.url or "")
+                direct_url_reusable = False
                 if direct_confirmation_url and not self._is_results_page(direct_confirmation_url):
+                    if self._is_trip_provider(provider, direct_confirmation_url):
+                        direct_url_reusable = await self._can_reuse_direct_handoff_url(
+                            direct_confirmation_url
+                        )
+                    else:
+                        direct_url_reusable = True
+                if direct_url_reusable:
                     result["handoff_channel"] = "direct_url"
                     if skip_fill:
                         result["reason"] = (
@@ -286,6 +309,84 @@ class PlaywrightCheckoutRunner:
         if "/flights/?" in lowered or "/flights/" in lowered and "triptype" in lowered:
             return True
         return False
+
+    async def _can_reuse_direct_handoff_url(self, confirmation_url: str) -> bool:
+        """Check whether a provider URL can be reopened outside the live session.
+
+        Trip.com passenger links can look valid inside the live browser but still
+        redirect fresh viewers to sign-in. Those must fall back to the hosted
+        remote browser instead of being handed to the user as a dead end.
+        """
+        target_url = str(confirmation_url or "").strip()
+        if not target_url or self._is_results_page(target_url):
+            return False
+
+        try:
+            from playwright.async_api import async_playwright as imported_async_playwright
+        except Exception:
+            return False
+
+        try:
+            async with imported_async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                page = await browser.new_page()
+                try:
+                    await page.goto(target_url, wait_until="domcontentloaded", timeout=45000)
+                    await page.wait_for_timeout(2500)
+                    final_url = str(page.url or "")
+                    lowered_url = final_url.lower()
+                    if self._is_results_page(final_url):
+                        return False
+                    if "/account/signin" in lowered_url or "forcelogin" in lowered_url or "/signin" in lowered_url:
+                        return False
+
+                    page_text = ""
+                    try:
+                        page_text = (await page.locator("body").inner_text(timeout=5000) or "").lower()
+                    except Exception:
+                        page_text = ""
+
+                    sign_in_markers = [
+                        "sign in to trip.com",
+                        "sign in/register",
+                        "continue with email",
+                        "continue with google",
+                        "continue with apple",
+                    ]
+                    if any(marker in page_text for marker in sign_in_markers):
+                        return False
+
+                    if "/flights/passenger" in lowered_url:
+                        return True
+                    if any(marker in page_text for marker in ["passenger", "traveler", "payment"]):
+                        return True
+                    return True
+                finally:
+                    await browser.close()
+        except Exception:
+            return False
+
+    async def _has_provider_verification_wall(self, page: Any) -> bool:
+        """Detect provider security checks that require manual user action."""
+        page_text = ""
+        try:
+            page_text = (await page.locator("body").inner_text(timeout=3000) or "").lower()
+        except Exception:
+            try:
+                page_text = (await page.content() or "").lower()
+            except Exception:
+                page_text = ""
+
+        markers = [
+            "too many attempts",
+            "complete the verification",
+            "select icons in the correct order",
+            "verification below",
+            "captcha",
+            "security verification",
+            "verify you are human",
+        ]
+        return any(marker in page_text for marker in markers)
 
     async def _trip_handle_baggage(self, page: Any) -> None:
         """Select default baggage and continue if baggage step is shown."""

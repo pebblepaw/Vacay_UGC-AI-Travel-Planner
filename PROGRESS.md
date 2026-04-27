@@ -1,6 +1,6 @@
 # VACAY / VacayClaw - Progress Log
 
-**Current Status (April 26, 2026): Workspace-runtime demo hardening complete.**
+**Current Status (April 27, 2026): Local-demo wrap-up in progress.**
 
 ## Progress Logs (in `docs/progress/`)
 
@@ -30,6 +30,15 @@
 - Browser takeover now keeps the last known URL even after the live session registry entry is gone.
 - Rednote short links from `xhslink.com` now work in both backend detection and frontend ingest UI.
 - Focused backend tests, frontend tests, frontend build, and `scripts/codex/verify.sh` now pass on the active branch.
+
+## Local Demo Work (April 27, 2026)
+
+- AWS hosting is paused. The demo path is local frontend + local backend + Supabase.
+- Flight booking now returns real Trip.com options, waits for user selection, and returns the current Trip.com URL when CAPTCHA appears.
+- The cards page now has a media overlay for per-location media folders.
+- The manual test script in `Sample_Inputs/VacayClaw_test.md` is now copy-paste ready.
+- Focused tests passed: backend booking, Telegram, workspace meal flow, response formatting, Trip.com handoff, and frontend cards/chat/workspace state.
+- Remaining live gap: Steps 1-4 still need one clean local Telegram run. Step 1 was interrupted; Douyin required fresh cookies; Telegram retried the long-running import.
 
 ## Canonical Planning + Operations Docs
 

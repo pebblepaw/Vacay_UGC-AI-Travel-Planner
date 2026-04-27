@@ -121,3 +121,91 @@ async def test_download_video_uses_tiktok_html_fallback_for_video_pages(monkeypa
 
     fallback_mock.assert_called_once_with(video_url)
     assert result == fallback_result
+
+
+@pytest.mark.asyncio
+async def test_download_video_uses_douyin_metadata_card_fallback_when_cookies_are_required(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service = VideoDownloaderService()
+    video_url = "https://www.douyin.com/video/7561228825859886371?source=Googlebot-sdc"
+    fallback_result = {
+        "success": True,
+        "url": video_url,
+        "file_path": "/tmp/douyin-card.png",
+        "preview_url": "http://127.0.0.1:8000/media/douyin-card.png",
+        "title": "One day #observatorypark #sydney - 抖音",
+        "platform": "douyin",
+        "thumbnail": None,
+        "description": "Sydney observatory park day out",
+    }
+
+    monkeypatch.setattr(
+        service,
+        "_download_sync",
+        Mock(
+            return_value={
+                "success": False,
+                "url": video_url,
+                "error": "Download failed: ERROR: Fresh cookies (not necessarily logged in) are needed",
+                "title": "Unknown",
+                "platform": "douyin",
+            }
+        ),
+    )
+    fallback_mock = Mock(return_value=fallback_result)
+    monkeypatch.setattr(service, "_download_platform_metadata_card", fallback_mock)
+
+    result = await service.download_video(video_url)
+
+    fallback_mock.assert_called_once()
+    assert fallback_mock.call_args.args == (
+        video_url,
+        "douyin",
+        "Download failed: ERROR: Fresh cookies (not necessarily logged in) are needed",
+    )
+    assert result == fallback_result
+
+
+@pytest.mark.asyncio
+async def test_download_video_uses_rednote_metadata_card_fallback_when_formats_are_missing(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service = VideoDownloaderService()
+    note_url = "https://www.xiaohongshu.com/discovery/item/69a3ccd4000000001a031563"
+    fallback_result = {
+        "success": True,
+        "url": note_url,
+        "file_path": "/tmp/rednote-card.png",
+        "preview_url": "http://127.0.0.1:8000/media/rednote-card.png",
+        "title": "Sydney hidden gems - 小红书",
+        "platform": "rednote",
+        "thumbnail": None,
+        "description": "Sydney hidden gems weekend guide",
+    }
+
+    monkeypatch.setattr(
+        service,
+        "_download_sync",
+        Mock(
+            return_value={
+                "success": False,
+                "url": note_url,
+                "error": "Download failed: ERROR: [generic] No video formats found!",
+                "title": "Unknown",
+                "platform": "rednote",
+            }
+        ),
+    )
+    fallback_mock = Mock(return_value=fallback_result)
+    monkeypatch.setattr(service, "_download_platform_metadata_card", fallback_mock)
+
+    result = await service.download_video(note_url)
+
+    fallback_mock.assert_called_once()
+    assert fallback_mock.call_args.args == (
+        note_url,
+        "rednote",
+        "Download failed: ERROR: [generic] No video formats found!",
+    )
+    assert result == fallback_result

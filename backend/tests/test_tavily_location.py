@@ -252,6 +252,56 @@ async def test_geocode_location_falls_back_to_nominatim_for_tavily_address_when_
 
 
 @pytest.mark.asyncio
+async def test_geocode_location_rejects_false_positive_nominatim_match_before_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = TavilyLocationService()
+
+    monkeypatch.setattr(service, "_geocode_with_mapbox", AsyncMock(return_value=None), raising=False)
+    monkeypatch.setattr(service, "_geocode_with_nominatim_structured", AsyncMock(return_value=None))
+    nominatim_geocode = AsyncMock(
+        side_effect=[
+            {
+                "coords": [151.2253274, -33.8738008],
+                "full_name": "Dr Gordon Slater, 5, Ward Avenue, Potts Point, Sydney, New South Wales, 2011, Australia",
+                "address": "Dr Gordon Slater, 5, Ward Avenue, Potts Point, Sydney, New South Wales, 2011, Australia",
+                "img": "",
+                "country_code": "au",
+                "country": "Australia",
+                "region": "New South Wales",
+                "locality": "Sydney",
+            },
+            {
+                "coords": [151.2678, -33.9192],
+                "full_name": "Gordon's Bay, Clovelly, Sydney, New South Wales, Australia",
+                "address": "Gordon's Bay, Clovelly, Sydney, New South Wales, Australia",
+                "img": "",
+                "country_code": "au",
+                "country": "Australia",
+                "region": "New South Wales",
+                "locality": "Sydney",
+            },
+        ]
+    )
+    monkeypatch.setattr(service, "_geocode_with_nominatim", nominatim_geocode)
+    monkeypatch.setattr(
+        service,
+        "_discover_location_candidates_with_tavily",
+        AsyncMock(return_value=[]),
+        raising=False,
+    )
+
+    result = await service.geocode_location("Gordon's Bay", "Sydney, Australia")
+
+    assert result is not None
+    assert result["coords"] == [151.2678, -33.9192]
+    assert nominatim_geocode.await_args_list == [
+        call("Gordon's Bay", "Sydney, Australia"),
+        call("Gordon's Bay", None),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_geocode_with_mapbox_prefers_public_token_over_secret(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

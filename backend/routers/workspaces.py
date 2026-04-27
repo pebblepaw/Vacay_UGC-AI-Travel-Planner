@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict
 from datetime import datetime
 import logging
 import re
@@ -11,7 +12,11 @@ from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconn
 from langchain_core.messages import AIMessage, HumanMessage
 
 from backend.agent.graph import app
-from backend.agent.nodes.travel_tool_executor import _execute_replan_day
+from backend.agent.nodes.travel_tool_executor import (
+    _execute_replan_day,
+    _search_places_nearby_sync,
+    _select_meal_anchor,
+)
 from backend.config import settings
 from backend.models.schemas import (
     Accommodation,
@@ -36,6 +41,7 @@ from backend.storage.supabase_storage import supabase_storage as storage
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
+TELEGRAM_MESSAGE_LIMIT = 4096
 DEFAULT_CATEGORY_SLOTS = {
     "Food": "12:00 - 13:30",
     "Nature": "09:00 - 11:00",
@@ -61,6 +67,14 @@ PENDING_CATEGORY_MAP = {
 }
 WORKSPACE_RESET_RE = re.compile(
     r"\b(reset|start over|new trip|restart trip|fresh trip|clear trip)\b",
+    re.IGNORECASE,
+)
+MEAL_REQUEST_RE = re.compile(
+    r"\b(breakfast|brunch|lunch|dinner|restaurant|restaurants|food|meal|meals)\b",
+    re.IGNORECASE,
+)
+MEAL_OPTIONS_ACTION_RE = re.compile(
+    r"\b(find|show|suggest|recommend|options?|places?|locations?|restaurants?)\b",
     re.IGNORECASE,
 )
 
@@ -114,6 +128,279 @@ def _workspace_telegram_target(workspace_id: str) -> tuple[int, int | None] | No
         return chat_id, None
 
 
+def _parse_slot_start_minutes(slot: str | None) -> int | None:
+    if not slot or "-" not in slot:
+        return None
+    start_raw = slot.split("-", maxsplit=1)[0].strip()
+    try:
+        hour_raw, minute_raw = start_raw.split(":", maxsplit=1)
+        return (int(hour_raw) * 60) + int(minute_raw)
+    except ValueError:
+        return None
+
+
+def _classify_meal_from_slot(slot: str | None) -> str | None:
+    start_minutes = _parse_slot_start_minutes(slot)
+    if start_minutes is None:
+        return None
+    if start_minutes < 11 * 60:
+        return "breakfast"
+    if start_minutes < 15 * 60:
+        return "lunch"
+    if start_minutes < 18 * 60:
+        return "afternoon meal"
+    return "dinner"
+
+
+def _summarize_multi_meal_additions(message: str, previous_trip: Trip, updated_trip: Trip, fallback: str) -> str:
+    if not MEAL_REQUEST_RE.search(message or ""):
+        return fallback
+
+    previous_food_ids = {
+        poi.id
+        for day in previous_trip.days
+        for poi in day.pois
+        if poi.category == "Food"
+    }
+    added_foods_by_day: dict[int, list[POI]] = defaultdict(list)
+    for day in updated_trip.days:
+        for poi in day.pois:
+            if poi.category != "Food" or poi.id in previous_food_ids:
+                continue
+            added_foods_by_day[day.day_number].append(poi)
+
+    added_food_count = sum(len(pois) for pois in added_foods_by_day.values())
+    if added_food_count <= 1:
+        return fallback
+
+    summary_lines = ["Added meal stops for your trip:"]
+    for day_number in sorted(added_foods_by_day):
+        pois = sorted(
+            added_foods_by_day[day_number],
+            key=lambda poi: (
+                _parse_slot_start_minutes(poi.time_slot) if _parse_slot_start_minutes(poi.time_slot) is not None else 99 * 60,
+                poi.name.lower(),
+            ),
+        )
+        formatted_entries = []
+        for poi in pois:
+            meal_label = _classify_meal_from_slot(poi.time_slot)
+            if meal_label:
+                formatted_entries.append(f"{meal_label} at {poi.name}")
+            else:
+                formatted_entries.append(poi.name)
+        summary_lines.append(f"Day {day_number}: {', '.join(formatted_entries)}.")
+
+    return "\n".join(summary_lines)
+
+
+def _requested_meal_types(message: str) -> list[str]:
+    lowered = (message or "").lower()
+    meal_types = [meal for meal in ("breakfast", "brunch", "lunch", "dinner") if meal in lowered]
+    if not meal_types and MEAL_REQUEST_RE.search(message or ""):
+        meal_types = ["lunch"]
+    return meal_types
+
+
+def _requested_meal_days(message: str, trip: Trip) -> list[Day]:
+    lowered = (message or "").lower()
+    if not trip.days:
+        return []
+    if re.search(r"\b(both|all|each|every)\s+days?\b", lowered):
+        return list(trip.days)
+    day_match = re.search(r"\bday\s*(\d+)\b", lowered)
+    if day_match:
+        day_number = int(day_match.group(1))
+        return [day for day in trip.days if day.day_number == day_number]
+    return list(trip.days)
+
+
+def _requests_meal_options(message: str, trip: Trip) -> bool:
+    return bool(
+        trip.days
+        and MEAL_REQUEST_RE.search(message or "")
+        and MEAL_OPTIONS_ACTION_RE.search(message or "")
+        and _requested_meal_types(message)
+    )
+
+
+def _normalize_meal_candidate(candidate: dict, meal_type: str, anchor_name: str) -> dict:
+    coords = list(candidate.get("coords") or [0.0, 0.0])
+    if len(coords) != 2:
+        coords = [0.0, 0.0]
+    return {
+        "name": str(candidate.get("name") or f"{meal_type.title()} stop near {anchor_name}"),
+        "coords": [float(coords[0]), float(coords[1])],
+        "description": str(candidate.get("description") or f"{meal_type.title()} near {anchor_name}"),
+        "image": str(candidate.get("image") or candidate.get("img") or "https://placehold.co/600x400/f5ede8/372f2f?text=Meal"),
+        "source_url": str(candidate.get("source_url") or candidate.get("url") or ""),
+    }
+
+
+def _build_pending_meal_options(trip: Trip, message: str) -> dict:
+    meal_types = _requested_meal_types(message)
+    days = _requested_meal_days(message, trip)
+    recommended_items: list[dict] = []
+    single_items: list[dict] = []
+
+    for day in days:
+        for meal_type in meal_types:
+            anchor = _select_meal_anchor(day, meal_type)
+            anchor_coords = anchor.coords if anchor else trip.accommodation.coords
+            anchor_name = anchor.name if anchor else trip.title
+            results = _search_places_nearby_sync(anchor_coords, meal_type, cuisine_hint="")[:3]
+            normalized_results = [
+                {
+                    "day_number": day.day_number,
+                    "meal_type": meal_type,
+                    "anchor_name": anchor_name,
+                    "candidate": _normalize_meal_candidate(result, meal_type, anchor_name),
+                }
+                for result in results
+                if str(result.get("name") or "").strip()
+            ]
+            if not normalized_results:
+                continue
+            recommended_items.append(normalized_results[0])
+            single_items.extend(normalized_results)
+
+    choices: list[dict] = []
+    if recommended_items:
+        choices.append(
+            {
+                "number": 1,
+                "kind": "recommended_set",
+                "label": "Recommended set",
+                "items": recommended_items,
+            }
+        )
+    for item in single_items:
+        choices.append(
+            {
+                "number": len(choices) + 1,
+                "kind": "single",
+                "label": (
+                    f"Day {item['day_number']} {item['meal_type']}: "
+                    f"{item['candidate']['name']}"
+                ),
+                "items": [item],
+            }
+        )
+    return {"kind": "meal_options", "choices": choices}
+
+
+def _format_meal_options(pending_meal_options: dict) -> str:
+    choices = list(pending_meal_options.get("choices") or [])
+    if not choices:
+        return "I could not find meal options near the current route."
+
+    lines = ["Meal options. Reply with a number to add one.", ""]
+    for choice in choices:
+        if choice.get("kind") == "recommended_set":
+            items = [
+                (
+                    f"Day {item['day_number']} {item['meal_type']} - "
+                    f"{item['candidate']['name']}"
+                )
+                for item in choice.get("items") or []
+            ]
+            lines.append(f"{choice['number']}. Recommended set: {'; '.join(items)}")
+            continue
+
+        item = (choice.get("items") or [{}])[0]
+        candidate = item.get("candidate") or {}
+        description = str(candidate.get("description") or "").strip()
+        suffix = f" — {description}" if description else ""
+        lines.append(
+            f"{choice['number']}. Day {item.get('day_number')} "
+            f"{item.get('meal_type')}: {candidate.get('name')}{suffix}"
+        )
+    return "\n".join(lines)
+
+
+def _select_pending_meal_choice(message: str, pending_meal_options: dict | None) -> dict | None:
+    choices = list((pending_meal_options or {}).get("choices") or [])
+    if not choices:
+        return None
+
+    lowered = (message or "").strip().lower()
+    number_match = re.search(
+        r"(?:^|\b)(?:option|choice|number|no\.?|#)?\s*(\d+)\b",
+        lowered,
+    )
+    if number_match:
+        number = int(number_match.group(1))
+        for choice in choices:
+            if int(choice.get("number") or 0) == number:
+                return choice
+
+    for choice in choices:
+        for item in choice.get("items") or []:
+            candidate_name = str((item.get("candidate") or {}).get("name") or "").strip().lower()
+            if candidate_name and candidate_name in lowered:
+                return choice
+    return None
+
+
+def _meal_time_slot(meal_type: str) -> str:
+    return {
+        "breakfast": "09:00 - 10:00",
+        "brunch": "11:00 - 12:15",
+        "lunch": "12:30 - 13:45",
+        "dinner": "19:00 - 20:30",
+    }.get(meal_type.lower(), "12:30 - 13:45")
+
+
+def _apply_pending_meal_choice(trip: Trip, choice: dict) -> tuple[Trip, str]:
+    updated_trip = trip.model_copy(deep=True)
+    added: list[tuple[int, str, str]] = []
+    changed_days: set[int] = set()
+
+    for item in choice.get("items") or []:
+        day_number = int(item.get("day_number") or 0)
+        meal_type = str(item.get("meal_type") or "lunch")
+        candidate = dict(item.get("candidate") or {})
+        target_day = next((day for day in updated_trip.days if day.day_number == day_number), None)
+        if target_day is None:
+            continue
+
+        candidate_name = str(candidate.get("name") or "").strip()
+        if not candidate_name:
+            continue
+        existing_names = {poi.name.strip().lower() for poi in target_day.pois if poi.category == "Food"}
+        if candidate_name.lower() in existing_names:
+            continue
+
+        coords = list(candidate.get("coords") or [0.0, 0.0])
+        target_day.pois.append(
+            POI(
+                id=f"poi_{uuid.uuid4().hex[:8]}",
+                name=candidate_name,
+                category="Food",
+                coords=(float(coords[0]), float(coords[1])),
+                img=str(candidate.get("image") or "https://placehold.co/600x400/f5ede8/372f2f?text=Meal"),
+                time_slot=_meal_time_slot(meal_type),
+                vibe=str(candidate.get("description") or f"{meal_type.title()} stop"),
+                priority="normal",
+                intensity="low",
+                visit_duration=75 if meal_type in {"brunch", "lunch", "dinner"} else 60,
+            )
+        )
+        added.append((day_number, meal_type, candidate_name))
+        changed_days.add(day_number)
+
+    for day_number in sorted(changed_days):
+        updated_trip, _ = _execute_replan_day(updated_trip, day_number)
+
+    if not added:
+        return updated_trip, "Those meal stops are already in the trip."
+
+    lines = ["Added meal stops:"]
+    for day_number, meal_type, candidate_name in added:
+        lines.append(f"Day {day_number} {meal_type}: {candidate_name}.")
+    return updated_trip, "\n".join(lines)
+
+
 def _format_interrupt_options(response: ChatResponse) -> str:
     lines: list[str] = []
     for msg in response.messages:
@@ -126,12 +413,89 @@ def _format_interrupt_options(response: ChatResponse) -> str:
     return "\n".join(lines)
 
 
-def _format_workspace_reply_for_telegram(workspace_id: str, response: ChatResponse) -> str:
-    agent_text = next((msg.content for msg in reversed(response.messages) if msg.type == "agent" and msg.content), "") or "Done."
-    lines = [agent_text]
+def _split_long_telegram_section(section: str, limit: int = TELEGRAM_MESSAGE_LIMIT) -> list[str]:
+    normalized = section.strip()
+    if not normalized:
+        return []
+    if len(normalized) <= limit:
+        return [normalized]
+
+    chunks: list[str] = []
+    remaining = normalized
+    while len(remaining) > limit:
+        split_at = remaining.rfind("\n\n", 0, limit + 1)
+        if split_at == -1:
+            split_at = remaining.rfind("\n", 0, limit + 1)
+        if split_at == -1:
+            split_at = remaining.rfind(" ", 0, limit + 1)
+        if split_at == -1 or split_at < max(limit // 2, 1):
+            split_at = limit
+
+        chunk = remaining[:split_at].rstrip()
+        if chunk:
+            chunks.append(chunk)
+        remaining = remaining[split_at:].lstrip()
+
+    if remaining:
+        chunks.append(remaining)
+    return chunks
+
+
+def _pack_telegram_sections(
+    sections: list[str],
+    *,
+    limit: int = TELEGRAM_MESSAGE_LIMIT,
+) -> list[str]:
+    chunks: list[str] = []
+    current = ""
+
+    for section in sections:
+        normalized = section.strip()
+        if not normalized:
+            continue
+
+        if len(normalized) <= limit:
+            candidate = f"{current}\n\n{normalized}" if current else normalized
+            if len(candidate) <= limit:
+                current = candidate
+                continue
+            if current:
+                chunks.append(current)
+            current = normalized
+            continue
+
+        if current:
+            chunks.append(current)
+            current = ""
+
+        split_chunks = _split_long_telegram_section(normalized, limit=limit)
+        if not split_chunks:
+            continue
+        chunks.extend(split_chunks[:-1])
+        current = split_chunks[-1]
+
+    if current:
+        chunks.append(current)
+
+    return chunks
+
+
+def _build_workspace_reply_sections(
+    workspace_id: str,
+    response: ChatResponse,
+    *,
+    default_text: str | None = "Done.",
+) -> list[str]:
+    agent_text = next((msg.content for msg in reversed(response.messages) if msg.type == "agent" and msg.content), "")
+    sections: list[str] = []
+    if agent_text:
+        sections.append(agent_text)
+    elif default_text:
+        sections.append(default_text)
+
     options_text = _format_interrupt_options(response)
     if options_text:
-        lines.append(options_text)
+        sections.append(options_text)
     open_url = next(
         (
             msg.content
@@ -141,9 +505,27 @@ def _format_workspace_reply_for_telegram(workspace_id: str, response: ChatRespon
         "",
     )
     if open_url:
-        lines.extend(["", f"Link: {open_url}"])
-    lines.extend(["", f"Workspace: {_workspace_share_url(workspace_id)}"])
-    return "\n".join(lines)
+        sections.append(f"Link: {open_url}")
+    sections.append(f"Workspace: {_workspace_share_url(workspace_id)}")
+    return sections
+
+
+def _build_workspace_reply_for_telegram_chunks(workspace_id: str, response: ChatResponse) -> list[str]:
+    return _pack_telegram_sections(_build_workspace_reply_sections(workspace_id, response))
+
+
+async def _send_telegram_chunks(
+    *,
+    chat_id: int | str,
+    message_thread_id: int | None,
+    chunks: list[str],
+) -> None:
+    for chunk in chunks:
+        await telegram_bot.send_message(
+            chat_id=chat_id,
+            text=chunk,
+            message_thread_id=message_thread_id,
+        )
 
 
 async def _mirror_web_turn_to_telegram(workspace_id: str, message: str, response: ChatResponse) -> None:
@@ -154,15 +536,15 @@ async def _mirror_web_turn_to_telegram(workspace_id: str, message: str, response
         return
     chat_id, message_thread_id = target
     try:
-        await telegram_bot.send_message(
+        await _send_telegram_chunks(
             chat_id=chat_id,
-            text=f"Web user: {message}",
             message_thread_id=message_thread_id,
+            chunks=[f"Web user: {message}"],
         )
-        await telegram_bot.send_message(
+        await _send_telegram_chunks(
             chat_id=chat_id,
-            text=_format_workspace_reply_for_telegram(workspace_id, response),
             message_thread_id=message_thread_id,
+            chunks=_build_workspace_reply_for_telegram_chunks(workspace_id, response),
         )
     except Exception as exc:
         logger.error("Telegram web mirror send failed for %s: %s", workspace_id, exc)
@@ -611,8 +993,67 @@ async def _invoke_workspace_agent(workspace_id: str, message: str, user_id: str 
         trip = _build_empty_workspace_trip(workspace_id)
         await storage.save_trip(trip)
         await workspace_runtime.bind_workspace_to_trip(workspace_id, trip.trip_id, title=trip.title)
+    previous_trip = trip.model_copy(deep=True)
 
     runtime_state = await workspace_runtime.load_runtime_state(workspace_id)
+    pending_meal_choice = _select_pending_meal_choice(
+        message,
+        runtime_state.get("pending_meal_options"),
+    )
+    if pending_meal_choice:
+        updated_trip, summary = _apply_pending_meal_choice(trip, pending_meal_choice)
+        runtime_state = {**runtime_state, "pending_meal_options": None}
+        await storage.save_trip(updated_trip)
+        await workspace_runtime.bind_workspace_to_trip(workspace_id, updated_trip.trip_id, title=updated_trip.title)
+        await workspace_runtime.save_runtime_state(workspace_id, runtime_state)
+        await workspace_runtime.append_event(workspace_id, "user", message, {"user_id": user_id, "source": source})
+        await workspace_runtime.append_event(workspace_id, "agent", summary, {"source": source})
+        await workspace_runtime.build_workspace_snapshot(workspace_id, updated_trip)
+        return ChatResponse(
+            messages=[
+                ChatMessage(
+                    id=f"msg_{uuid.uuid4().hex[:8]}",
+                    type="user",
+                    content=message,
+                    timestamp=datetime.now(),
+                ),
+                ChatMessage(
+                    id=f"msg_{uuid.uuid4().hex[:8]}",
+                    type="agent",
+                    content=summary,
+                    timestamp=datetime.now(),
+                ),
+            ],
+            updated_trip=updated_trip,
+        )
+
+    if _requests_meal_options(message, trip):
+        pending_meal_options = _build_pending_meal_options(trip, message)
+        summary = _format_meal_options(pending_meal_options)
+        if pending_meal_options.get("choices"):
+            runtime_state = {**runtime_state, "pending_meal_options": pending_meal_options}
+            await workspace_runtime.save_runtime_state(workspace_id, runtime_state)
+        await workspace_runtime.append_event(workspace_id, "user", message, {"user_id": user_id, "source": source})
+        await workspace_runtime.append_event(workspace_id, "agent", summary, {"source": source})
+        await workspace_runtime.build_workspace_snapshot(workspace_id, trip)
+        return ChatResponse(
+            messages=[
+                ChatMessage(
+                    id=f"msg_{uuid.uuid4().hex[:8]}",
+                    type="user",
+                    content=message,
+                    timestamp=datetime.now(),
+                ),
+                ChatMessage(
+                    id=f"msg_{uuid.uuid4().hex[:8]}",
+                    type="agent",
+                    content=summary,
+                    timestamp=datetime.now(),
+                ),
+            ],
+            updated_trip=trip,
+        )
+
     pending_candidate, remaining_candidates = _select_pending_candidate(
         message,
         list(runtime_state.get("pending_import_candidates") or []),
@@ -675,7 +1116,10 @@ async def _invoke_workspace_agent(workspace_id: str, message: str, user_id: str 
     for ev in events:
         role = ev.get("role")
         content = ev.get("content")
+        metadata = ev.get("metadata") or {}
         if not content:
+            continue
+        if metadata.get("hidden_from_agent_history"):
             continue
         if role == "user":
             history_messages.append(HumanMessage(content=content))
@@ -723,6 +1167,7 @@ async def _invoke_workspace_agent(workspace_id: str, message: str, user_id: str 
     updated_trip = result.get("trip") or trip
     if isinstance(updated_trip, dict):
         updated_trip = Trip(**updated_trip)
+    final_content = _summarize_multi_meal_additions(message, previous_trip, updated_trip, final_content)
 
     await storage.save_trip(updated_trip)
     await workspace_runtime.bind_workspace_to_trip(workspace_id, updated_trip.trip_id, title=updated_trip.title)
@@ -739,14 +1184,25 @@ async def _invoke_workspace_agent(workspace_id: str, message: str, user_id: str 
     await workspace_runtime.append_event(workspace_id, "user", message, {"user_id": user_id, "source": source})
     await workspace_runtime.append_event(workspace_id, "agent", final_content, {"source": source})
 
+    chat_interrupt = result.get("chat_interrupt")
+    if isinstance(chat_interrupt, dict) and chat_interrupt.get("interrupt_type") == "open_url" and chat_interrupt.get("content"):
+        await workspace_runtime.append_event(
+            workspace_id,
+            "agent",
+            str(chat_interrupt.get("content")),
+            {
+                "source": source,
+                "interrupt_type": "open_url",
+                "hidden_from_agent_history": True,
+            },
+        )
+
     if "budget" in message.lower():
         await workspace_runtime.upsert_memory(workspace_id, user_id, "budget_preference", message)
     if "flight" in message.lower() or "airline" in message.lower():
         await workspace_runtime.upsert_memory(workspace_id, None, "last_flight_intent", message)
 
     await workspace_runtime.build_workspace_snapshot(workspace_id, updated_trip)
-
-    chat_interrupt = result.get("chat_interrupt")
     response_messages = [
         ChatMessage(
             id=f"msg_{uuid.uuid4().hex[:8]}",

@@ -204,17 +204,17 @@ class TavilyLocationService:
 
         if query_hint:
             result = await self._geocode_with_nominatim_structured(place_name, query_hint)
-            if self._accept_result(result, scope):
+            if self._accept_result(result, scope) and self._result_matches_query(result, place_name):
                 return result
 
         result = await self._geocode_with_nominatim(place_name, query_hint)
-        if self._accept_result(result, scope):
+        if self._accept_result(result, scope) and self._result_matches_query(result, place_name):
             return result
 
         if query_hint:
             logger.info(f"Nominatim retry without city for: {place_name}")
             result = await self._geocode_with_nominatim(place_name, None)
-            if self._accept_result(result, scope):
+            if self._accept_result(result, scope) and self._result_matches_query(result, place_name):
                 return result
 
         address_candidates = await self._discover_location_candidates_with_tavily(place_name, query_hint)

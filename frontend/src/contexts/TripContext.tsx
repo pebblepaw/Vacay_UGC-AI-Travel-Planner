@@ -56,12 +56,22 @@ interface TripProviderProps {
 export const mapWorkspaceEventsToMessages = (events: Array<Record<string, unknown>>): ChatMessage[] => {
   return events
     .filter((event) => typeof event.content === 'string' && typeof event.role === 'string')
-    .map((event, index) => ({
-      id: createClientMessageId(`ev_${index}`),
-      type: event.role === 'user' ? 'user' : 'agent',
-      content: String(event.content),
-      timestamp: new Date(String(event.created_at || new Date().toISOString())),
-    }));
+    .map((event, index) => {
+      const metadata =
+        event.metadata && typeof event.metadata === 'object' && !Array.isArray(event.metadata)
+          ? (event.metadata as Record<string, unknown>)
+          : {};
+      const interruptType = typeof metadata.interrupt_type === 'string' ? metadata.interrupt_type : undefined;
+      const status = typeof metadata.status === 'string' ? metadata.status : undefined;
+      return {
+        id: createClientMessageId(`ev_${index}`),
+        type: interruptType ? 'interrupt' : event.role === 'user' ? 'user' : 'agent',
+        content: String(event.content),
+        timestamp: new Date(String(event.created_at || new Date().toISOString())),
+        interrupt_type: interruptType as ChatMessage['interrupt_type'],
+        status: status as ChatMessage['status'],
+      };
+    });
 };
 
 export const hydrateWorkspaceSnapshot = (snapshot: WorkspaceSnapshotResponse) => ({
@@ -256,10 +266,6 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId, wo
             addChatMessage({ id: msg.id, timestamp: new Date(msg.timestamp), type: 'agent', content: msg.content });
           }
           if (msg.type === 'interrupt') {
-            if (msg.interrupt_type === 'open_url' && msg.content) {
-              window.open(msg.content, '_blank', 'noopener,noreferrer');
-              return;
-            }
             addChatMessage({
               id: msg.id,
               timestamp: new Date(msg.timestamp),

@@ -189,6 +189,233 @@ async def test_workspace_chat_attach_binds_real_trip_then_snapshot(monkeypatch: 
 
 
 @pytest.mark.asyncio
+async def test_workspace_chat_returns_meal_options_before_adding(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    workspace_id = "telegram:-10023:main"
+    trip = Trip(
+        trip_id="trip_meal_summary",
+        title="Sydney Meals",
+        source_videos=[],
+        days=[
+            Day(
+                day_number=1,
+                date="2026-05-01",
+                pois=[
+                    POI(
+                        id="poi_bridge",
+                        name="Sydney Harbour Bridge",
+                        category="Culture",
+                        coords=(151.2108, -33.8523),
+                        img="https://example.com/bridge.jpg",
+                        time_slot="09:00 - 10:00",
+                        vibe="Bridge walk",
+                        priority="high",
+                        intensity="normal",
+                        visit_duration=60,
+                    ),
+                    POI(
+                        id="poi_hill",
+                        name="Observatory Hill",
+                        category="Nature",
+                        coords=(151.2048, -33.8599),
+                        img="https://example.com/hill.jpg",
+                        time_slot="16:30 - 17:30",
+                        vibe="Sunset lookout",
+                        priority="high",
+                        intensity="normal",
+                        visit_duration=60,
+                    ),
+                ],
+            ),
+            Day(
+                day_number=2,
+                date="2026-05-02",
+                pois=[
+                    POI(
+                        id="poi_bronte",
+                        name="Bronte Beach",
+                        category="Nature",
+                        coords=(151.2653, -33.9033),
+                        img="https://example.com/bronte.jpg",
+                        time_slot="10:00 - 11:00",
+                        vibe="Ocean pool",
+                        priority="high",
+                        intensity="normal",
+                        visit_duration=60,
+                    ),
+                    POI(
+                        id="poi_coogee",
+                        name="Coogee Beach",
+                        category="Nature",
+                        coords=(151.2576, -33.9205),
+                        img="https://example.com/coogee.jpg",
+                        time_slot="15:30 - 16:30",
+                        vibe="Beach walk",
+                        priority="high",
+                        intensity="normal",
+                        visit_duration=60,
+                    ),
+                ],
+            ),
+        ],
+        accommodation=Accommodation(
+            name="Demo Hotel",
+            price_per_night=200,
+            status="Mock",
+            img="https://example.com/hotel.jpg",
+            coords=(151.2093, -33.8688),
+        ),
+    )
+
+    async def _load_trip(trip_id: str):
+        if trip_id == trip.trip_id:
+            return trip
+        return None
+
+    def _fake_search(anchor_coords, meal_type: str, cuisine_hint: str = ""):
+        del anchor_coords, cuisine_hint
+        return [
+            {
+                "name": f"{meal_type.title()} Option A",
+                "coords": [151.2110, -33.8560],
+                "description": f"{meal_type.title()} near the day route.",
+                "image": "https://example.com/meal-a.jpg",
+            },
+            {
+                "name": f"{meal_type.title()} Option B",
+                "coords": [151.2120, -33.8570],
+                "description": f"Second {meal_type} choice.",
+                "image": "https://example.com/meal-b.jpg",
+            },
+        ]
+
+    save_trip = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        workspaces_router,
+        "storage",
+        SimpleNamespace(
+            load_trip=AsyncMock(side_effect=_load_trip),
+            save_trip=save_trip,
+            list_all_trips=AsyncMock(return_value=[trip]),
+            seed_placeholder_if_empty=AsyncMock(return_value=None),
+        ),
+    )
+    app_ainvoke = AsyncMock(return_value={"messages": [AIMessage(content="Should not run graph.")]})
+    monkeypatch.setattr(workspaces_router, "app", SimpleNamespace(ainvoke=app_ainvoke))
+    monkeypatch.setattr(workspaces_router, "_search_places_nearby_sync", _fake_search, raising=False)
+
+    await workspace_runtime.ensure_workspace(workspace_id, trip_id=trip.trip_id)
+
+    response = await workspaces_router._invoke_workspace_agent(
+        workspace_id,
+        "Find lunch and dinner locations for both days",
+        user_id="1",
+        source="telegram",
+    )
+
+    content = response.messages[1].content
+    assert "Meal options" in content
+    assert "Reply with a number" in content
+    assert "Recommended set" in content
+    assert "Lunch Option A" in content
+    assert "Dinner Option A" in content
+    assert "Day 1" in content
+    assert "Day 2" in content
+    app_ainvoke.assert_not_awaited()
+    save_trip.assert_not_awaited()
+    runtime_state = await workspace_runtime.load_runtime_state(workspace_id)
+    assert runtime_state["pending_meal_options"]["choices"][0]["kind"] == "recommended_set"
+
+
+@pytest.mark.asyncio
+async def test_workspace_chat_adds_selected_meal_option_after_number_reply(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    workspace_id = "telegram:-10024:main"
+    trip = _make_trip("trip_meal_select")
+    trip.title = "Sydney Meals"
+    trip.days = [
+        Day(
+            day_number=1,
+            date="2026-05-01",
+            pois=[
+                POI(
+                    id="poi_bridge",
+                    name="Sydney Harbour Bridge",
+                    category="Culture",
+                    coords=(151.2108, -33.8523),
+                    img="https://example.com/bridge.jpg",
+                    time_slot="09:00 - 10:00",
+                    vibe="Bridge walk",
+                    priority="high",
+                    intensity="normal",
+                    visit_duration=60,
+                )
+            ],
+        )
+    ]
+    saved_trips: list[Trip] = [trip]
+
+    async def _load_trip(trip_id: str):
+        for saved in reversed(saved_trips):
+            if saved.trip_id == trip_id:
+                return saved
+        return None
+
+    async def _save_trip(updated: Trip):
+        saved_trips.append(updated)
+        return True
+
+    def _fake_search(anchor_coords, meal_type: str, cuisine_hint: str = ""):
+        del anchor_coords, cuisine_hint
+        return [
+            {
+                "name": "Harbour Lunch Room",
+                "coords": [151.2110, -33.8560],
+                "description": "Lunch near the bridge.",
+                "image": "https://example.com/lunch.jpg",
+            }
+        ]
+
+    monkeypatch.setattr(
+        workspaces_router,
+        "storage",
+        SimpleNamespace(
+            load_trip=AsyncMock(side_effect=_load_trip),
+            save_trip=AsyncMock(side_effect=_save_trip),
+            list_all_trips=AsyncMock(return_value=[trip]),
+            seed_placeholder_if_empty=AsyncMock(return_value=None),
+        ),
+    )
+    monkeypatch.setattr(workspaces_router, "app", SimpleNamespace(ainvoke=AsyncMock()))
+    monkeypatch.setattr(workspaces_router, "_search_places_nearby_sync", _fake_search, raising=False)
+
+    await workspace_runtime.ensure_workspace(workspace_id, trip_id=trip.trip_id)
+    await workspaces_router._invoke_workspace_agent(
+        workspace_id,
+        "Find lunch location",
+        user_id="1",
+        source="telegram",
+    )
+
+    response = await workspaces_router._invoke_workspace_agent(
+        workspace_id,
+        "1",
+        user_id="1",
+        source="telegram",
+    )
+
+    content = response.messages[1].content
+    latest_trip = saved_trips[-1]
+    assert "Added meal stops" in content
+    assert "Harbour Lunch Room" in content
+    assert any(poi.name == "Harbour Lunch Room" for day in latest_trip.days for poi in day.pois)
+    runtime_state = await workspace_runtime.load_runtime_state(workspace_id)
+    assert runtime_state.get("pending_meal_options") is None
+
+
+@pytest.mark.asyncio
 async def test_workspace_restart_command_starts_fresh_trip(monkeypatch: pytest.MonkeyPatch):
     workspace_id = "telegram:-10088:main"
 
@@ -491,6 +718,157 @@ async def test_workspace_chat_clears_stale_booking_retry_state_for_fresh_search(
     assert captured["initial_state"]["booking_offers"] == []
     assert captured["initial_state"]["selected_offer"] == {}
     assert captured["initial_state"]["booking_result"] == {}
+
+
+@pytest.mark.asyncio
+async def test_workspace_chat_skips_hidden_interrupt_events_in_agent_history(monkeypatch: pytest.MonkeyPatch):
+    workspace_id = "telegram:-10047:main"
+    trip = _make_trip("trip_skip_hidden_interrupt")
+    captured: dict[str, object] = {}
+
+    async def _load_trip(trip_id: str):
+        if trip_id == trip.trip_id:
+            return trip
+        return None
+
+    async def _ainvoke(initial_state, config):
+        captured["messages"] = initial_state["messages"]
+        return {
+            "messages": [AIMessage(content="Done")],
+            "trip": trip,
+            "chat_interrupt": None,
+            "booking_context": None,
+            "booking_offers": None,
+            "selected_offer": None,
+            "booking_result": None,
+        }
+
+    monkeypatch.setattr(
+        workspaces_router,
+        "storage",
+        SimpleNamespace(
+            load_trip=AsyncMock(side_effect=_load_trip),
+            save_trip=AsyncMock(return_value=True),
+            list_all_trips=AsyncMock(return_value=[trip]),
+            seed_placeholder_if_empty=AsyncMock(return_value=None),
+        ),
+    )
+    monkeypatch.setattr(
+        workspaces_router.workspace_runtime,
+        "list_events",
+        AsyncMock(
+            return_value=[
+                {
+                    "role": "agent",
+                    "content": "https://trip.com/flights/passenger?token=hidden",
+                    "metadata": {"interrupt_type": "open_url", "hidden_from_agent_history": True},
+                },
+                {
+                    "role": "user",
+                    "content": "Shrink it to 2 days",
+                    "metadata": {"source": "telegram"},
+                },
+                {
+                    "role": "agent",
+                    "content": "Resized trip to 2 days.",
+                    "metadata": {"source": "telegram"},
+                },
+            ]
+        ),
+    )
+    monkeypatch.setattr(workspaces_router, "app", SimpleNamespace(ainvoke=AsyncMock(side_effect=_ainvoke)))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "ensure_workspace", AsyncMock(return_value=None))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "get_workspace_trip_id", AsyncMock(return_value=trip.trip_id))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "load_runtime_state", AsyncMock(return_value={}))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "save_runtime_state", AsyncMock(return_value=None))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "append_event", AsyncMock(return_value=None))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "build_workspace_snapshot", AsyncMock(return_value={}))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "list_memory", AsyncMock(return_value={}))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "bind_workspace_to_trip", AsyncMock(return_value=None))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "clear_langgraph_state", AsyncMock(return_value=None))
+
+    await workspaces_router._invoke_workspace_agent(
+        workspace_id,
+        "Find lunch and dinner locations for both days",
+        user_id="1",
+        source="telegram",
+    )
+
+    message_contents = [message.content for message in captured["messages"]]
+    assert "https://trip.com/flights/passenger?token=hidden" not in message_contents
+    assert "Shrink it to 2 days" in message_contents
+    assert "Resized trip to 2 days." in message_contents
+
+
+@pytest.mark.asyncio
+async def test_workspace_chat_persists_open_url_interrupt_as_hidden_workspace_event(monkeypatch: pytest.MonkeyPatch):
+    workspace_id = "telegram:-10048:main"
+    trip = _make_trip("trip_interrupt_history")
+
+    async def _load_trip(trip_id: str):
+        if trip_id == trip.trip_id:
+            return trip
+        return None
+
+    append_event = AsyncMock(return_value=None)
+
+    monkeypatch.setattr(
+        workspaces_router,
+        "storage",
+        SimpleNamespace(
+            load_trip=AsyncMock(side_effect=_load_trip),
+            save_trip=AsyncMock(return_value=True),
+            list_all_trips=AsyncMock(return_value=[trip]),
+            seed_placeholder_if_empty=AsyncMock(return_value=None),
+        ),
+    )
+    monkeypatch.setattr(
+        workspaces_router,
+        "app",
+        SimpleNamespace(
+            ainvoke=AsyncMock(
+                return_value={
+                    "messages": [AIMessage(content="I opened the Trip.com continue page in a new window.")],
+                    "trip": trip,
+                    "chat_interrupt": {
+                        "interrupt_type": "open_url",
+                        "content": "https://trip.com/flights/passenger?token=visible",
+                        "status": "pending",
+                    },
+                    "booking_context": None,
+                    "booking_offers": None,
+                    "selected_offer": None,
+                    "booking_result": None,
+                }
+            )
+        ),
+    )
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "ensure_workspace", AsyncMock(return_value=None))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "get_workspace_trip_id", AsyncMock(return_value=trip.trip_id))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "load_runtime_state", AsyncMock(return_value={}))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "save_runtime_state", AsyncMock(return_value=None))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "append_event", append_event)
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "build_workspace_snapshot", AsyncMock(return_value={}))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "list_events", AsyncMock(return_value=[]))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "list_memory", AsyncMock(return_value={}))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "bind_workspace_to_trip", AsyncMock(return_value=None))
+    monkeypatch.setattr(workspaces_router.workspace_runtime, "clear_langgraph_state", AsyncMock(return_value=None))
+
+    response = await workspaces_router._invoke_workspace_agent(
+        workspace_id,
+        "option_id: offer_4",
+        user_id="web-sync-check",
+        source="web",
+    )
+
+    interrupt_call = append_event.await_args_list[2]
+    assert interrupt_call.args[0] == workspace_id
+    assert interrupt_call.args[1] == "agent"
+    assert interrupt_call.args[2] == "https://trip.com/flights/passenger?token=visible"
+    assert interrupt_call.args[3]["interrupt_type"] == "open_url"
+    assert interrupt_call.args[3]["hidden_from_agent_history"] is True
+    assert response.messages[-1].interrupt_type == "open_url"
+    assert response.messages[-1].content == "https://trip.com/flights/passenger?token=visible"
 
 
 @pytest.mark.asyncio
@@ -1380,3 +1758,99 @@ async def test_workspace_chat_mirrors_web_turn_back_to_telegram(monkeypatch: pyt
     assert first_payload["text"] == "Web user: Shrink it to 2 days"
     assert second_payload["chat_id"] == -10077
     assert "Resized trip to 2 days." in second_payload["text"]
+    assert "Workspace:" in second_payload["text"]
+
+
+@pytest.mark.asyncio
+async def test_workspace_chat_mirrors_long_booking_link_without_exceeding_telegram_limit(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    workspace_id = "telegram:-10078:main"
+    long_link = f"https://trip.com/order?token={'x' * 4030}"
+    send_mock = AsyncMock(return_value={"ok": True})
+    response = ChatResponse(
+        messages=[
+            ChatMessage(id="u1", type="user", content="book it", timestamp="2026-04-24T00:00:00Z"),
+            ChatMessage(
+                id="a1",
+                type="agent",
+                content="I opened the Trip.com continue page in a new window.",
+                timestamp="2026-04-24T00:00:01Z",
+            ),
+            ChatMessage(
+                id="i1",
+                type="interrupt",
+                content=long_link,
+                timestamp="2026-04-24T00:00:02Z",
+                interrupt_type="open_url",
+                status="pending",
+            ),
+        ],
+        updated_trip=None,
+    )
+
+    monkeypatch.setattr(workspaces_router, "_invoke_workspace_agent", AsyncMock(return_value=response))
+    monkeypatch.setattr(workspaces_router, "telegram_bot", SimpleNamespace(enabled=True, send_message=send_mock), raising=False)
+    monkeypatch.setattr(workspaces_router.settings, "PUBLIC_WEB_BASE_URL", "https://demo.vacay.ai")
+
+    await workspaces_router.send_workspace_message(
+        workspace_id,
+        WorkspaceChatRequest(message="book it", user_id="web-user-1", source="web"),
+    )
+
+    texts = [call.kwargs["text"] for call in send_mock.await_args_list]
+    assert texts[0] == "Web user: book it"
+    assert any(text.startswith("Link: https://trip.com/order?token=") for text in texts[1:])
+    assert any(text.startswith("Workspace: https://demo.vacay.ai/") for text in texts[1:])
+    assert all(len(text) <= workspaces_router.TELEGRAM_MESSAGE_LIMIT for text in texts)
+
+
+@pytest.mark.asyncio
+async def test_telegram_webhook_sends_booking_link_in_separate_chunks_when_needed(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    long_link = f"https://trip.com/order?token={'y' * 4030}"
+    chat_response = ChatResponse(
+        messages=[
+            ChatMessage(
+                id="agent_reply",
+                type="agent",
+                content="I opened the Trip.com continue page in a new window.",
+                timestamp="2026-04-24T00:00:00Z",
+            ),
+            ChatMessage(
+                id="handoff",
+                type="interrupt",
+                content=long_link,
+                timestamp="2026-04-24T00:00:01Z",
+                interrupt_type="open_url",
+                status="pending",
+            ),
+        ],
+        updated_trip=None,
+    )
+
+    monkeypatch.setattr(telegram_router.settings, "TELEGRAM_WEBHOOK_SECRET", "sec")
+    monkeypatch.setattr(telegram_router.settings, "PUBLIC_WEB_BASE_URL", "https://demo.vacay.ai")
+    monkeypatch.setattr(telegram_router.settings, "TELEGRAM_BOT_TOKEN", "demo-token")
+    send_mock = AsyncMock(return_value={"ok": True})
+    monkeypatch.setattr(telegram_router.telegram_bot, "get_username", AsyncMock(return_value="VacayClawBot"))
+    monkeypatch.setattr(telegram_router.telegram_bot, "send_message", send_mock)
+    monkeypatch.setattr(telegram_router, "_invoke_workspace_agent", AsyncMock(return_value=chat_response))
+
+    req = TelegramWebhookRequest(
+        update_id=2,
+        message={
+            "text": "@VacayClawBot book it",
+            "chat": {"id": -10099, "title": "Vacay", "type": "supergroup"},
+            "from": {"id": 55},
+        },
+    )
+
+    result = await telegram_router.ingest_telegram_webhook(req, x_telegram_bot_api_secret_token="sec")
+
+    assert result["status"] == "processed"
+    texts = [call.kwargs["text"] for call in send_mock.await_args_list]
+    assert any(text.startswith("Link: https://trip.com/order?token=") for text in texts)
+    assert any(text.startswith("Workspace: https://demo.vacay.ai/") for text in texts)
+    assert all(len(text) <= workspaces_router.TELEGRAM_MESSAGE_LIMIT for text in texts)

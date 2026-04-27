@@ -3,7 +3,6 @@ Video Downloader Service using yt-dlp.
 Downloads videos from TikTok, YouTube, Douyin, RedNote, and Instagram.
 """
 import html
-import yt_dlp
 from pathlib import Path
 import uuid
 import asyncio
@@ -12,6 +11,8 @@ import re
 from urllib.parse import quote
 
 import httpx
+from PIL import Image, ImageDraw, ImageFont
+import yt_dlp
 
 from backend.config import settings
 
@@ -20,6 +21,34 @@ logger = logging.getLogger(__name__)
 
 class VideoDownloaderService:
     """Service for downloading videos using yt-dlp."""
+
+    _SOCIAL_FALLBACK_HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/135.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    _METADATA_CARD_ERROR_MARKERS = {
+        "douyin": (
+            "fresh cookies",
+            "not necessarily logged in",
+            "login required",
+            "unable to extract",
+        ),
+        "rednote": (
+            "no video formats found",
+            "fresh cookies",
+            "not necessarily logged in",
+            "login required",
+            "unable to extract",
+        ),
+    }
+    _METADATA_CARD_PLATFORM_LABELS = {
+        "douyin": "Douyin",
+        "rednote": "Rednote",
+    }
 
     def __init__(self):
         self.download_dir = settings.DOWNLOADS_DIR
@@ -74,6 +103,21 @@ class VideoDownloaderService:
                     result = await loop.run_in_executor(None, self._download_tiktok_photo_post, url)
                 else:
                     result = await loop.run_in_executor(None, self._download_tiktok_video_page, url)
+            elif (
+                not result.get("success")
+                and self._should_try_metadata_card_fallback(platform, str(result.get("error") or ""))
+            ):
+                fallback_result = await loop.run_in_executor(
+                    None,
+                    self._download_platform_metadata_card,
+                    url,
+                    platform,
+                    str(result.get("error") or ""),
+                )
+                if fallback_result.get("success"):
+                    result = fallback_result
+                else:
+                    result["fallback_error"] = fallback_result.get("error")
             result.setdefault("url", url)
             result.setdefault("platform", platform)
             return result
@@ -155,6 +199,13 @@ class VideoDownloaderService:
         if "instagram.com" in url_lower:
             return "instagram"
         return "unknown"
+
+    def _should_try_metadata_card_fallback(self, platform: str, error: str) -> bool:
+        markers = self._METADATA_CARD_ERROR_MARKERS.get(platform)
+        if not markers:
+            return False
+        lowered = (error or "").lower()
+        return any(marker in lowered for marker in markers)
 
     def _decode_embedded_text(self, value: str) -> str:
         decoded = value.replace("\\u002F", "/").replace("\\/", "/")
@@ -315,6 +366,252 @@ class VideoDownloaderService:
             "platform": "tiktok",
             "thumbnail": thumbnail,
         }
+
+    def _download_platform_metadata_card(self, url: str, platform: str, download_error: str) -> dict:
+        metadata = self._resolve_platform_metadata(url, platform)
+        if not metadata:
+            return {
+                "success": False,
+                "url": url,
+                "error": f"Metadata fallback unavailable after extractor failure: {download_error}",
+                "title": "Unknown",
+                "platform": platform,
+            }
+
+        file_path = self._create_metadata_card(
+            platform=platform,
+            source_url=metadata.get("final_url") or url,
+            title=metadata.get("title") or "Untitled post",
+            description=metadata.get("description") or "",
+        )
+        title = metadata.get("title") or "Untitled post"
+        description = metadata.get("description") or title
+        logger.info("Built %s metadata fallback card for %s", platform, url)
+        return {
+            "success": True,
+            "url": url,
+            "file_path": file_path,
+            "preview_url": self.public_media_url(file_path),
+            "title": title,
+            "description": description,
+            "platform": platform,
+            "thumbnail": metadata.get("thumbnail"),
+            "source_url": metadata.get("final_url") or url,
+        }
+
+    def _resolve_platform_metadata(self, url: str, platform: str) -> dict | None:
+        if platform == "rednote":
+            html_metadata = self._fetch_page_metadata(url)
+            if self._metadata_is_usable(html_metadata):
+                return html_metadata
+            return None
+
+        if platform == "douyin":
+            html_metadata = self._fetch_page_metadata(url)
+            if self._metadata_is_usable(html_metadata):
+                return html_metadata
+            douyin_id = self._extract_douyin_video_id(url)
+            if not douyin_id:
+                return None
+            return self._search_tavily_metadata(
+                query=f"site:douyin.com/video {douyin_id}",
+                preferred_url_fragment=f"/video/{douyin_id}",
+            )
+
+        return None
+
+    def _fetch_page_metadata(self, url: str) -> dict | None:
+        try:
+            with httpx.Client(
+                headers=self._SOCIAL_FALLBACK_HEADERS,
+                follow_redirects=True,
+                timeout=self.timeout,
+            ) as client:
+                response = client.get(url)
+                response.raise_for_status()
+        except Exception as exc:
+            logger.warning("Metadata page fetch failed for %s: %s", url, exc)
+            return None
+
+        page = response.text or ""
+        title = self._extract_html_title(page)
+        description = self._extract_html_meta_content(page, ("og:description", "description"))
+        if not title:
+            title = self._extract_html_meta_content(page, ("og:title", "twitter:title"))
+        thumbnail = self._extract_html_meta_content(page, ("og:image", "twitter:image"))
+        return {
+            "title": title or "",
+            "description": description or title or "",
+            "thumbnail": thumbnail or None,
+            "final_url": str(response.url),
+        }
+
+    def _search_tavily_metadata(self, query: str, preferred_url_fragment: str | None = None) -> dict | None:
+        if not settings.TAVLY_API:
+            return None
+
+        payload = {
+            "api_key": settings.TAVLY_API,
+            "query": query,
+            "search_depth": "basic",
+            "include_answer": True,
+            "include_images": False,
+            "max_results": 5,
+        }
+        try:
+            with httpx.Client(timeout=min(self.timeout, 15.0)) as client:
+                response = client.post("https://api.tavily.com/search", json=payload)
+                response.raise_for_status()
+                data = response.json()
+        except Exception as exc:
+            logger.warning("Tavily metadata search failed for %s: %s", query, exc)
+            return None
+
+        results = data.get("results") or []
+        selected: dict | None = None
+        if preferred_url_fragment:
+            selected = next(
+                (
+                    result
+                    for result in results
+                    if preferred_url_fragment in str(result.get("url") or "")
+                ),
+                None,
+            )
+        if selected is None and results:
+            selected = results[0]
+        if selected is None:
+            return None
+
+        title = self._normalize_metadata_text(str(selected.get("title") or ""))
+        description = self._normalize_metadata_text(
+            str(selected.get("content") or data.get("answer") or title)
+        )
+        final_url = str(selected.get("url") or "")
+        metadata = {
+            "title": title,
+            "description": description,
+            "thumbnail": None,
+            "final_url": final_url,
+        }
+        return metadata if self._metadata_is_usable(metadata) else None
+
+    def _extract_html_title(self, page: str) -> str:
+        match = re.search(r"<title[^>]*>(.*?)</title>", page, re.I | re.S)
+        return self._normalize_metadata_text(match.group(1) if match else "")
+
+    def _extract_html_meta_content(self, page: str, names: tuple[str, ...]) -> str:
+        for name in names:
+            patterns = (
+                rf'<meta[^>]+property="{re.escape(name)}"[^>]+content="([^"]+)"',
+                rf"<meta[^>]+property='{re.escape(name)}'[^>]+content='([^']+)'",
+                rf'<meta[^>]+name="{re.escape(name)}"[^>]+content="([^"]+)"',
+                rf"<meta[^>]+name='{re.escape(name)}'[^>]+content='([^']+)'",
+            )
+            for pattern in patterns:
+                match = re.search(pattern, page, re.I | re.S)
+                if match:
+                    return self._normalize_metadata_text(match.group(1))
+        return ""
+
+    def _normalize_metadata_text(self, value: str) -> str:
+        cleaned = html.unescape(value or "")
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return cleaned
+
+    def _metadata_is_usable(self, metadata: dict | None) -> bool:
+        if not metadata:
+            return False
+
+        title = self._normalize_metadata_text(str(metadata.get("title") or ""))
+        description = self._normalize_metadata_text(str(metadata.get("description") or ""))
+        combined = f"{title} {description}".lower()
+        if not (title or description):
+            return False
+        return not any(
+            marker in combined
+            for marker in (
+                "404",
+                "not found",
+                "page not found",
+                "access denied",
+                "verification",
+                "captcha",
+            )
+        )
+
+    def _extract_douyin_video_id(self, url: str) -> str | None:
+        match = re.search(r"/video/(\d+)", url)
+        return match.group(1) if match else None
+
+    def _create_metadata_card(self, *, platform: str, source_url: str, title: str, description: str) -> str:
+        image = Image.new("RGB", (1280, 720), color="#101826")
+        draw = ImageDraw.Draw(image)
+        title_font = ImageFont.load_default()
+        body_font = ImageFont.load_default()
+
+        panel_color = "#17263a"
+        draw.rounded_rectangle((48, 48, 1232, 672), radius=28, fill=panel_color)
+        accent = "#44c8f5" if platform == "douyin" else "#ff6b92"
+        draw.rounded_rectangle((72, 72, 320, 128), radius=18, fill=accent)
+        platform_label = self._METADATA_CARD_PLATFORM_LABELS.get(platform, platform.title())
+        draw.text((96, 90), f"{platform_label} source", fill="#08111f", font=title_font)
+
+        title_text = self._ascii_card_text(title, fallback=f"{platform_label} travel post")
+        description_text = self._ascii_card_text(
+            description,
+            fallback="Media preview unavailable. This card preserves the source metadata for itinerary analysis.",
+        )
+        source_text = self._ascii_card_text(source_url, fallback="")
+
+        draw.multiline_text(
+            (96, 176),
+            self._wrap_text(title_text, width=52),
+            fill="#f3f7fb",
+            font=title_font,
+            spacing=10,
+        )
+        draw.multiline_text(
+            (96, 288),
+            self._wrap_text(description_text, width=72),
+            fill="#d3dfeb",
+            font=body_font,
+            spacing=8,
+        )
+        if source_text:
+            draw.multiline_text(
+                (96, 560),
+                self._wrap_text(f"Source: {source_text}", width=84),
+                fill="#7ec4d5",
+                font=body_font,
+                spacing=6,
+            )
+
+        file_path = self.download_dir / f"{uuid.uuid4().hex[:8]}.png"
+        image.save(file_path, format="PNG")
+        return str(file_path)
+
+    def _ascii_card_text(self, value: str, fallback: str) -> str:
+        normalized = self._normalize_metadata_text(value)
+        ascii_text = normalized.encode("ascii", "ignore").decode("ascii").strip()
+        return ascii_text or fallback
+
+    def _wrap_text(self, value: str, width: int) -> str:
+        words = value.split()
+        if not words:
+            return value
+
+        lines: list[str] = []
+        current = words[0]
+        for word in words[1:]:
+            candidate = f"{current} {word}"
+            if len(candidate) <= width:
+                current = candidate
+                continue
+            lines.append(current)
+            current = word
+        lines.append(current)
+        return "\n".join(lines)
 
     def cleanup_video(self, file_path: str) -> bool:
         """Delete a downloaded video file."""

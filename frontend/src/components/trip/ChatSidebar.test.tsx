@@ -131,4 +131,26 @@ describe('ChatSidebar', () => {
     expect(classText).toContain('break-words');
     expect(classText).not.toContain('max-w-none');
   });
+
+  it('renders open_url interrupts as clickable booking links instead of approval prompts', () => {
+    mockChatMessages = [
+      {
+        id: 'interrupt_1',
+        type: 'interrupt',
+        interrupt_type: 'open_url',
+        content: 'https://trip.com/flights/passenger?token=visible',
+        status: 'pending',
+        timestamp: new Date(),
+      },
+    ];
+
+    render(<ChatSidebar />);
+
+    expect(screen.getByRole('link', { name: /open booking handoff/i })).toHaveAttribute(
+      'href',
+      'https://trip.com/flights/passenger?token=visible',
+    );
+    expect(screen.queryByRole('button', { name: /approve/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /reject/i })).not.toBeInTheDocument();
+  });
 });

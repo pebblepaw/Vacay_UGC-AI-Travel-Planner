@@ -32,6 +32,52 @@ def _user_requested_immediate_booking(text: str) -> bool:
     return any(token in lowered for token in ("book ", "book a", "book the", "reserve", "checkout"))
 
 
+def _user_requested_checkout_retry(text: str) -> bool:
+    lowered = (text or "").lower()
+    return any(
+        token in lowered
+        for token in (
+            "continue",
+            "try again",
+            "retry",
+            "solved",
+            "go with",
+            "let's go with",
+            "lets go with",
+            "option",
+            "book it",
+            "checkout",
+        )
+    )
+
+
+def _checkout_retry_turn_key(text: str) -> str:
+    normalized = re.sub(r"\s+", " ", (text or "").strip().lower())
+    return normalized[:256]
+
+
+def _extract_offer_selection_id(text: str, offers: list[dict]) -> str:
+    normalized = (text or "").strip()
+    if not normalized or not offers:
+        return ""
+
+    lowered = normalized.lower()
+    offer_ids = {str(offer.get("id") or "").lower(): str(offer.get("id") or "") for offer in offers}
+    direct = re.search(r"\boffer_\d+\b", lowered)
+    if direct and direct.group(0) in offer_ids:
+        return offer_ids[direct.group(0)]
+
+    selection_match = re.search(
+        r"(?:^|\b)(?:option|choice|number|no\.?|#|go with|pick|choose|select|take|use|let'?s go with)\s*[_#-]?\s*(\d+)\b",
+        lowered,
+    )
+    exact_number_match = re.fullmatch(r"(?:option\s*)?(\d+)\.?", lowered)
+    number = int((selection_match or exact_number_match).group(1)) if (selection_match or exact_number_match) else 0
+    if 1 <= number <= len(offers):
+        return str(offers[number - 1].get("id") or "")
+    return ""
+
+
 def _extract_traveler_info(text: str) -> dict[str, str]:
     info: dict[str, str] = {}
     boundary = r"(?=\s*(性别|出生日期|国籍|证件类型|证件号|证件有效期|邮箱|手机号|$))"
@@ -77,13 +123,109 @@ def booking_agent_node(state: AgentState) -> dict:
     booking_context = state.get("booking_context") or {}
     latest_human_input = _latest_human_content(messages)
 
+    checkout_status = str(booking_context.get("checkout_status") or booking_result.get("status") or "")
+    provider_verification_pending = (
+        checkout_status == "needs_user_input"
+        and booking_result.get("handoff_channel") == "provider_verification"
+    )
+    failure_text = " ".join(
+        [
+            str(booking_result.get("reason") or ""),
+            str(booking_context.get("last_error") or ""),
+        ]
+    ).lower()
+    live_session_lost = "live session" in failure_text and "no longer available" in failure_text
+    if (
+        selected_offer
+        and booking_result
+        and checkout_status == "failed"
+        and live_session_lost
+        and _user_requested_immediate_booking(latest_human_input)
+    ):
+        intent = normalize_booking_intent(
+            message=instruction,
+            trip=state.get("trip"),
+            history=messages,
+        )
+        if intent.is_booking_request and intent.can_search:
+            refresh_call = {
+                "name": "find_booking_options",
+                "args": {
+                    "booking_type": intent.booking_type,
+                    "origin": intent.origin,
+                    "origin_code": intent.origin_code,
+                    "origin_city_code": intent.origin_city_code,
+                    "destination": intent.destination,
+                    "destination_code": intent.destination_code,
+                    "destination_city_code": intent.destination_city_code,
+                    "departure_date": intent.departure_date,
+                    "return_date": intent.return_date,
+                    "trip_type": intent.trip_type,
+                    "adults": intent.adults,
+                    "budget_limit": intent.budget_limit,
+                    "cabin": intent.cabin,
+                    "provider_hint": intent.provider_hint,
+                    "max_results": 10,
+                    "force_refresh": True,
+                },
+                "id": f"auto_{uuid.uuid4().hex[:10]}",
+                "type": "tool_call",
+            }
+            return {
+                "messages": [AIMessage(content="", tool_calls=[refresh_call])],
+                "last_agent": "booking_agent",
+            }
+
+    if (
+        selected_offer
+        and booking_result
+        and checkout_status in {"failed", "needs_user_input"}
+        and (checkout_status == "failed" or provider_verification_pending)
+        and _user_requested_checkout_retry(latest_human_input)
+    ):
+        retry_turn_key = _checkout_retry_turn_key(latest_human_input)
+        if booking_context.get("checkout_retry_turn_key") == retry_turn_key:
+            return {
+                "messages": [AIMessage(content="")],
+                "last_agent": "booking_agent",
+            }
+        retry_checkout = {
+            "name": "proceed_checkout",
+            "args": {
+                "traveler_name": "",
+                "traveler_email": "",
+                "traveler_phone": "",
+                "traveler_gender": "",
+                "traveler_birth_date": "",
+                "traveler_nationality": "",
+                "traveler_doc_type": "",
+                "traveler_doc_number": "",
+                "traveler_doc_expiry": "",
+                "headless": False,
+                "allow_empty_traveler": True,
+            },
+            "id": f"auto_{uuid.uuid4().hex[:10]}",
+            "type": "tool_call",
+        }
+        return {
+            "messages": [AIMessage(content="", tool_calls=[retry_checkout])],
+            "last_agent": "booking_agent",
+            "booking_context": {
+                **booking_context,
+                "checkout_retry_turn_key": retry_turn_key,
+            },
+        }
+
     if booking_offers and not selected_offer:
-        match = re.search(r"\boffer_\d+\b", instruction) or re.search(r"\boffer_\d+\b", latest_human_input)
-        if match:
+        selected_offer_id = (
+            _extract_offer_selection_id(instruction, booking_offers)
+            or _extract_offer_selection_id(latest_human_input, booking_offers)
+        )
+        if selected_offer_id:
             auto_select = {
                 "name": "select_booking_option",
                 "args": {
-                    "option_id": match.group(0),
+                    "option_id": selected_offer_id,
                     "notes": "User selected offer id.",
                 },
                 "id": f"auto_{uuid.uuid4().hex[:10]}",
@@ -94,24 +236,8 @@ def booking_agent_node(state: AgentState) -> dict:
                 "last_agent": "booking_agent",
             }
         if _user_requested_immediate_booking(latest_human_input):
-            cheapest_offer = min(
-                booking_offers,
-                key=lambda item: (
-                    float(item.get("price") or 0.0),
-                    str(item.get("title") or item.get("id") or ""),
-                ),
-            )
-            auto_select = {
-                "name": "select_booking_option",
-                "args": {
-                    "option_id": str(cheapest_offer["id"]),
-                    "notes": "Auto-selected the cheapest offer because the user asked to book now.",
-                },
-                "id": f"auto_{uuid.uuid4().hex[:10]}",
-                "type": "tool_call",
-            }
             return {
-                "messages": [AIMessage(content="", tool_calls=[auto_select])],
+                "messages": [AIMessage(content="Choose one flight option by number before I open checkout.")],
                 "last_agent": "booking_agent",
             }
 

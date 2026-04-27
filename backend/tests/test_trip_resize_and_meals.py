@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
@@ -9,7 +10,9 @@ from backend.agent.nodes import travel_editor as travel_editor_node_module
 from backend.agent.nodes.travel_tool_executor import (
     _execute_add_meal_stop,
     _execute_resize_trip,
+    haversine_km,
     _pick_named_place_result,
+    _search_places_nearby_sync,
 )
 from backend.models.schemas import Accommodation, Day, POI, Trip
 
@@ -204,6 +207,50 @@ def _trip_with_two_remote_outliers() -> Trip:
     )
 
 
+def _trip_with_eastern_beach_overflow() -> Trip:
+    return Trip(
+        trip_id="trip_eastern_beach_overflow",
+        title="Sydney Explorer",
+        source_videos=[],
+        days=[
+            Day(
+                day_number=1,
+                date="2026-05-01",
+                pois=[
+                    _poi("Bronte Beach", (151.2653, -33.9033), category="Nature"),
+                    _poi("Clovelly Beach", (151.2594, -33.9127), category="Nature"),
+                    _poi("Coogee Beach", (151.2576, -33.9205), category="Nature"),
+                    _poi("Icebergs Pool", (151.2746, -33.8951), category="Nature"),
+                    _poi("Gordon's Bay", (151.2678, -33.9192), category="Nature"),
+                ],
+            ),
+            Day(
+                day_number=2,
+                date="2026-05-02",
+                pois=[
+                    _poi("Observatory Hill", (151.2048, -33.8599)),
+                    _poi("Sydney Opera House", (151.2153, -33.8568)),
+                    _poi("Darling Harbour", (151.2001, -33.8748)),
+                ],
+            ),
+            Day(
+                day_number=3,
+                date="2026-05-03",
+                pois=[
+                    _poi("Blue Mountains", (150.3119, -33.7147), category="Nature"),
+                ],
+            ),
+        ],
+        accommodation=Accommodation(
+            name="Hotel",
+            price_per_night=200.0,
+            status="Booked",
+            img="https://example.com/hotel.jpg",
+            coords=(151.2093, -33.8688),
+        ),
+    )
+
+
 def test_execute_resize_trip_groups_obvious_geographic_clusters():
     trip = _trip_for_resize()
 
@@ -253,6 +300,23 @@ def test_execute_resize_trip_drops_second_remote_outlier_when_two_day_plan_is_fu
     assert "dropped" in message.lower()
 
 
+def test_execute_resize_trip_keeps_two_day_clusters_geographically_tight_when_one_region_overflows():
+    trip = _trip_with_eastern_beach_overflow()
+
+    resized, message = _execute_resize_trip(trip, 2)
+
+    assert len(resized.days) == 2
+    assert "Blue Mountains" not in {poi.name for day in resized.days for poi in day.pois}
+    assert "dropped" in message.lower()
+
+    for day in resized.days:
+        max_pair_distance = 0.0
+        for index, left in enumerate(day.pois):
+            for right in day.pois[index + 1 :]:
+                max_pair_distance = max(max_pair_distance, haversine_km(left.coords, right.coords))
+        assert max_pair_distance < 6.5
+
+
 def test_execute_add_meal_stop_adds_food_poi_to_day(monkeypatch: pytest.MonkeyPatch):
     trip = _trip_for_meals()
 
@@ -274,6 +338,119 @@ def test_execute_add_meal_stop_adds_food_poi_to_day(monkeypatch: pytest.MonkeyPa
     assert any(poi.name == "Bills Bondi" for poi in food_pois)
     assert any("12:" in poi.time_slot for poi in food_pois)
     assert "Bills Bondi" in message
+
+
+def test_search_places_nearby_falls_back_to_text_search_when_overpass_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class _TimeoutingClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url, *args, **kwargs):
+            if "overpass" in url:
+                raise httpx.ReadTimeout("timed out")
+            raise AssertionError(f"Unexpected URL: {url}")
+
+    class _FakeDDGS:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def text(self, query: str, max_results: int = 5):
+            assert "lunch restaurants near Bondi Beach" in query
+            return [
+                {
+                    "title": "Bills Bondi",
+                    "body": "Popular brunch and lunch spot near Bondi Beach.",
+                    "href": "https://example.com/bills-bondi",
+                }
+            ]
+
+    monkeypatch.setattr("backend.agent.nodes.travel_tool_executor.httpx.Client", _TimeoutingClient)
+    monkeypatch.setattr("backend.agent.nodes.travel_tool_executor.DDGS", _FakeDDGS)
+    monkeypatch.setattr(
+        "backend.agent.nodes.travel_tool_executor._reverse_geocode_anchor_sync",
+        lambda coords: "Bondi Beach, Sydney, Australia",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "backend.agent.nodes.travel_tool_executor._auto_geocode",
+        lambda place_name, city_hint: (151.2745, -33.8911),
+    )
+
+    results = _search_places_nearby_sync((151.2743, -33.8915), "lunch")
+
+    assert results[0]["name"] == "Bills Bondi"
+    assert results[0]["coords"] == [151.2745, -33.8911]
+
+
+def test_search_places_nearby_tries_secondary_overpass_endpoint_before_text_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class _Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "elements": [
+                    {
+                        "tags": {
+                            "name": "Cafe Sydney",
+                            "amenity": "restaurant",
+                            "addr:street": "Customs House",
+                        },
+                        "lon": 151.2093,
+                        "lat": -33.8610,
+                    }
+                ]
+            }
+
+    class _FailoverClient:
+        calls: list[str] = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url, *args, **kwargs):
+            self.calls.append(url)
+            if url == "https://primary-overpass.invalid/api/interpreter":
+                raise httpx.ReadTimeout("timed out")
+            if url == "https://secondary-overpass.invalid/api/interpreter":
+                return _Response()
+            raise AssertionError(f"Unexpected URL: {url}")
+
+    monkeypatch.setattr(
+        "backend.agent.nodes.travel_tool_executor.OVERPASS_INTERPRETER_URLS",
+        [
+            "https://primary-overpass.invalid/api/interpreter",
+            "https://secondary-overpass.invalid/api/interpreter",
+        ],
+    )
+    monkeypatch.setattr("backend.agent.nodes.travel_tool_executor.httpx.Client", _FailoverClient)
+    monkeypatch.setattr(
+        "backend.agent.nodes.travel_tool_executor._search_places_nearby_text_fallback_sync",
+        lambda anchor_coords, meal_type, cuisine_hint="": [],
+    )
+
+    results = _search_places_nearby_sync((151.1996, -33.8675), "dinner")
+
+    assert [item["name"] for item in results] == ["Cafe Sydney"]
+    assert _FailoverClient.calls == [
+        "https://primary-overpass.invalid/api/interpreter",
+        "https://secondary-overpass.invalid/api/interpreter",
+    ]
 
 
 def test_execute_add_meal_stops_preserve_existing_sightseeing_pois_across_two_days(monkeypatch: pytest.MonkeyPatch):

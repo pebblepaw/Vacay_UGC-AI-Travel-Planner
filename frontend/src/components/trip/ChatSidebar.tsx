@@ -63,6 +63,7 @@ const MessageBubble = ({
   }
 
   if (message.type === 'interrupt') {
+    const isOpenUrlInterrupt = message.interrupt_type === 'open_url' && Boolean(message.content);
     return (
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -77,31 +78,56 @@ const MessageBubble = ({
             <Card className="overflow-hidden border-accent/30">
               <CardContent className="p-4">
                 {/* Status indicator */}
-                <div className="flex items-center gap-2 mb-3">
-                  {message.status === 'pending' && (
-                    <Badge variant="secondary" className="gap-1 text-xs">
-                      <Clock className="h-3 w-3" />
-                      Waiting for input
-                    </Badge>
-                  )}
-                  {message.status === 'approved' && (
-                    <Badge className="bg-category-nature text-primary-foreground gap-1 text-xs">
-                      <Check className="h-3 w-3" />
-                      Approved
-                    </Badge>
-                  )}
-                  {message.status === 'rejected' && (
-                    <Badge variant="destructive" className="gap-1 text-xs">
-                      <X className="h-3 w-3" />
-                      Rejected
-                    </Badge>
-                  )}
-                </div>
+                {!isOpenUrlInterrupt && (
+                  <div className="flex items-center gap-2 mb-3">
+                    {message.status === 'pending' && (
+                      <Badge variant="secondary" className="gap-1 text-xs">
+                        <Clock className="h-3 w-3" />
+                        Waiting for input
+                      </Badge>
+                    )}
+                    {message.status === 'approved' && (
+                      <Badge className="bg-category-nature text-primary-foreground gap-1 text-xs">
+                        <Check className="h-3 w-3" />
+                        Approved
+                      </Badge>
+                    )}
+                    {message.status === 'rejected' && (
+                      <Badge variant="destructive" className="gap-1 text-xs">
+                        <X className="h-3 w-3" />
+                        Rejected
+                      </Badge>
+                    )}
+                  </div>
+                )}
 
-                <p className="text-sm text-foreground mb-4">{message.content}</p>
+                {isOpenUrlInterrupt ? (
+                  <div className="space-y-3">
+                    <Badge variant="secondary" className="gap-1 text-xs">
+                      <Sparkles className="h-3 w-3" />
+                      Booking handoff ready
+                    </Badge>
+                    <p className="text-sm text-foreground">
+                      The provider checkout page is ready. Open it from here whenever you want to continue.
+                    </p>
+                    <a
+                      href={message.content}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+                    >
+                      Open booking handoff
+                    </a>
+                    <p className="text-xs text-muted-foreground break-all [overflow-wrap:anywhere]">
+                      {message.content}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-sm text-foreground mb-4">{message.content}</p>
+                )}
 
                 {/* Options */}
-                {message.options && message.status === 'pending' && (
+                {message.options && message.status === 'pending' && !isOpenUrlInterrupt && (
                   <div className="space-y-2 mb-4">
                     {message.options.map((option: ChatOption) => (
                       <motion.div
@@ -132,7 +158,7 @@ const MessageBubble = ({
                 )}
 
                 {/* Action buttons */}
-                {message.status === 'pending' && (
+                {message.status === 'pending' && !isOpenUrlInterrupt && (
                   <div className="flex gap-2">
                     <Button
                       size="sm"

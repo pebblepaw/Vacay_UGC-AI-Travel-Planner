@@ -134,7 +134,12 @@ def response_formatter_node(state: AgentState) -> dict:
                     "status": "pending",
                 }
             else:
-                if status == "needs_user_input":
+                if status == "needs_user_input" and handoff_channel == "provider_verification":
+                    formatted = render_copy(
+                        "booking.checkout_provider_verification",
+                        status=booking_result.get("status"),
+                    )
+                elif status == "needs_user_input":
                     formatted = render_copy(
                         "booking.checkout_user_input",
                         status=booking_result.get("status"),
@@ -220,7 +225,15 @@ def response_formatter_node(state: AgentState) -> dict:
                     "status": "pending",
                 }
             else:
-                if booking_result.get("status") == "needs_user_input":
+                if (
+                    booking_result.get("status") == "needs_user_input"
+                    and handoff_channel == "provider_verification"
+                ):
+                    formatted = render_copy(
+                        "booking.checkout_provider_verification",
+                        status=booking_result.get("status"),
+                    )
+                elif booking_result.get("status") == "needs_user_input":
                     formatted = render_copy(
                         "booking.checkout_user_input",
                         status=booking_result.get("status"),

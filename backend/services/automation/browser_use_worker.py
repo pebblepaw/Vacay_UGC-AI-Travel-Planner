@@ -17,6 +17,7 @@ import logging
 
 from backend.config import settings
 from backend.services.automation.live_booking_sessions import live_booking_sessions
+from backend.services.automation.remote_cdp import resolve_remote_cdp_url
 
 
 class _LLMProviderShim:
@@ -198,6 +199,7 @@ class BrowserUseWorker:
 
         remote_cdp_url = str(getattr(settings, "REMOTE_BROWSER_CDP_URL", "") or "").strip()
         if remote_cdp_url:
+            remote_cdp_url = resolve_remote_cdp_url(remote_cdp_url)
             browser = await playwright.chromium.connect_over_cdp(remote_cdp_url)
             existing_contexts = list(getattr(browser, "contexts", []) or [])
             if existing_contexts and getattr(existing_contexts[0], "pages", None):

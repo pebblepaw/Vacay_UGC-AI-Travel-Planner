@@ -2,15 +2,15 @@
 
 VacayClaw is now a **workspace-first collaborative travel runtime**. Use this file plus `AGENTS.md` and `23_Apr_Report.md` as operating context.
 
-## Current Status (2026-04-26)
+## Current Status (2026-04-27)
 
 - Backend supports workspace-scoped routing at `/api/workspaces/*` with shared event logs, runtime state, and signed web handoff.
 - Telegram webhook ingestion works at `/api/telegram/webhook`, keyed by `chat_id + message_thread_id`, sends outbound replies back into the Telegram group, ignores duplicate `update_id` deliveries, and ignores edited messages.
 - Frontend supports workspace mode via `/?workspace=<id>&token=<signed-token>`.
 - Workspace snapshots drive the shared web chat, the map, and media folders by place.
-- The branch has a live EC2 deployment with Docker Compose, Nginx, Telegram webhooks, and a public browser worker behind a Cloudflare quick tunnel.
+- The active demo path is local frontend + local backend + Supabase. AWS work is paused.
 - Meal insertion now checks the saved itinerary after replanning, so the bot stops claiming success when the new food stop gets dropped.
-- Browser takeover now keeps the last known Trip.com URL even after the live session registry entry is gone.
+- Trip.com booking now returns real options, waits for user selection, and treats CAPTCHA as a valid handoff by returning the current Trip.com URL.
 - Rednote short links from `xhslink.com` now flow through the same shared ingest path as full Rednote URLs.
 - The branch is still not cleanly done. It still needs one fresh full Telegram E2E run on this exact commit.
 
@@ -66,6 +66,16 @@ Other docs may lag and should be treated as historical unless updated in the sam
 - Live Telegram webhook roundtrip for:
   - initial Sydney itinerary build
   - trip resize to 2 days
+- Live local Telegram Step 5:
+  - returned real Trip.com flight options
+  - accepted `let's go with 1`
+  - hit Trip.com CAPTCHA
+  - returned the current Trip.com URL instead of looping or claiming payment
+- Partial live local Step 1:
+  - TikTok downloads started
+  - TikTok photo handling started
+  - Douyin short link resolved
+  - Douyin then required fresh cookies
 - Live public workspace render with map markers after the Mapbox env fix.
 - `scripts/codex/verify.sh`
 
@@ -73,14 +83,16 @@ Other docs may lag and should be treated as historical unless updated in the sam
 
 1. The full five-step Telegram E2E script in `Sample_Inputs/VacayClaw_test.md`.
 2. A fresh live rerun of Douyin and Rednote imports through Telegram after the short-link fix.
-3. Real cloud browser handoff on Trip.com through to the pre-payment page on this exact commit.
+3. Real Trip.com handoff past CAPTCHA. CAPTCHA URL handoff is now accepted for the demo.
 4. Cross-user concurrent edits from multiple real Telegram users and multiple browser clients.
-5. A stable public domain and TLS path that does not rely on a Cloudflare quick tunnel.
+5. A stable public domain and TLS path. AWS is paused for this pass.
+6. Step 1 idempotency during long media downloads. Telegram can retry a webhook before the current receipt is fully persisted.
 
 ## Next Operator Actions
 
-1. Run the full five-step script in `Sample_Inputs/VacayClaw_test.md` from a fresh Telegram group or fresh topic. Do not reuse the noisy old demo thread.
-2. Verify the cinema-insertion step and the booking step against one fresh saved workspace snapshot.
-3. Re-run real Douyin and Rednote imports through Telegram now that `xhslink.com` is recognized.
-4. Replace the quick tunnel with a stable public hostname when demo-day setup is ready.
-5. If multi-process durability becomes a requirement, move active live browser session ownership out of `live_booking_sessions` and into a real shared coordinator.
+1. Start the local backend and frontend.
+2. Create a fresh Telegram group, add `@VacayClawBot`, and send the copy-paste messages in `Sample_Inputs/VacayClaw_test.md`.
+3. Confirm the bot creates a new Supabase workspace automatically for the group.
+4. If Douyin asks for cookies, count that as an external blocker and continue with the TikTok-backed itinerary.
+5. Verify Step 3 meal options, Step 4 cinema insertion, and Step 5 CAPTCHA URL handoff.
+6. Before a full live rerun, harden the Telegram receipt claim so long Step 1 downloads cannot be retried mid-run.

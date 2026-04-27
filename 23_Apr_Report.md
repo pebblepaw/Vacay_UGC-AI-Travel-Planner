@@ -10,6 +10,27 @@
 - Move from one trip JSON blob to a `hybrid workspace + snapshot` model: real shared records underneath, one derived snapshot for the web client.
 - Run the product cloud-first on `single EC2 + Docker Compose`, with a remote browser worker that the user can take over before payment.
 
+## Local Demo Wrap-Up (April 27, 2026)
+
+The demo path is now local frontend + local backend + Supabase. AWS work is paused.
+
+What is ready:
+
+- Telegram group messages create or reuse a Supabase workspace automatically.
+- Each Telegram group maps to one workspace ID: `telegram:{chat_id}:main`.
+- The web app opens the same workspace through the signed workspace link.
+- Flight booking returns real Trip.com options and waits for the user to select one.
+- Trip.com CAPTCHA is treated as a valid demo handoff. The bot returns the current Trip.com URL instead of trying to solve it.
+- The cards page has a media overlay. Playable clips autoplay muted; unsupported sources show a source-link card.
+
+What is not clean yet:
+
+- Steps 1-4 have not completed as one clean local Telegram E2E run on this commit.
+- Step 1 started real TikTok ingestion, but the live run was stopped to save time.
+- Douyin resolved the short link but then required fresh cookies. Treat that as an expected external blocker unless cookies are added.
+- Telegram retried a long-running Step 1 webhook while downloads were still active. The receipt claim path should be hardened before a full live rerun.
+- Meal option selection and cinema insertion have code coverage, but they still need a fresh manual pass in Telegram.
+
 ## Progress Checklist
 
 - [x] Create the `VacayClaw` runtime shell and replace the current trip-scoped chat entrypoint with workspace-scoped routing.
@@ -24,7 +45,7 @@
 - [x] Add per-location media folders with autoplay clips on the desktop web view.
 - [x] Replace URL-only booking handoff with a cloud browser session handoff that survives remote use.
 - [x] Deploy the full stack on one EC2 host with Docker Compose, Nginx, and Telegram webhooks.
-- [ ] Write end-to-end tests and a fixed demo script for the final presentation.
+- [ ] Write end-to-end tests and complete one clean manual demo script run for the final presentation.
 
 ## Branch Status (April 26, 2026)
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from langchain_core.messages import ToolMessage
 import logging
+import re
 
 from backend.agent.state import AgentState
 from backend.services.automation.browser_use_worker import (
@@ -16,6 +17,13 @@ from backend.services.automation.browser_use_worker import (
     browser_use_worker,
 )
 from backend.services.automation.playwright_checkout import playwright_checkout_runner
+
+
+def _latest_human_turn_key(messages: list) -> str:
+    for message in reversed(messages):
+        if getattr(message, "type", "") == "human":
+            return re.sub(r"\s+", " ", str(getattr(message, "content", "") or "").strip().lower())[:256]
+    return ""
 
 
 async def booking_tool_executor(state: AgentState) -> dict:
@@ -43,8 +51,10 @@ async def booking_tool_executor(state: AgentState) -> dict:
                 requested_return = args.get("return_date", "")
                 requested_trip_type = args.get("trip_type", "")
                 requested_provider = args.get("provider_hint", "trip.com")
+                force_refresh = bool(args.get("force_refresh", False))
                 if (
-                    booking_offers
+                    not force_refresh
+                    and booking_offers
                     and booking_context.get("origin") == requested_origin
                     and booking_context.get("destination") == requested_destination
                     and booking_context.get("departure_date") == requested_departure
@@ -76,8 +86,7 @@ async def booking_tool_executor(state: AgentState) -> dict:
                     provider_hint=requested_provider,
                     max_results=int(args.get("max_results", 5)),
                 )
-                offers = await browser_use_worker.search_offers(query)
-                booking_context = {
+                attempted_context = {
                     "booking_type": query.booking_type,
                     "origin": query.origin,
                     "destination": query.destination,
@@ -86,9 +95,11 @@ async def booking_tool_executor(state: AgentState) -> dict:
                     "trip_type": query.trip_type,
                     "adults": query.adults,
                     "provider_hint": query.provider_hint,
+                    "attempted": True,
+                    "explicit_selection": False,
                 }
-                booking_context["attempted"] = True
-                booking_context["explicit_selection"] = False
+                offers = await browser_use_worker.search_offers(query)
+                booking_context = attempted_context
                 booking_offers = offers
                 if not offers:
                     failure_reason = (browser_use_worker.last_error or "unknown reason").strip()
@@ -126,7 +137,12 @@ async def booking_tool_executor(state: AgentState) -> dict:
                 if not selected_offer:
                     message = "No selected offer. Call select_booking_option first."
                 else:
-                    if booking_context.get("checkout_status") in {"in_progress", "needs_user_payment", "failed"}:
+                    checkout_status = booking_context.get("checkout_status")
+                    handoff_channel = booking_result.get("handoff_channel")
+                    if checkout_status in {"in_progress", "needs_user_payment"} or (
+                        checkout_status == "needs_user_input"
+                        and handoff_channel != "provider_verification"
+                    ):
                         message = "Checkout already attempted; skipping duplicate checkout call."
                         tool_messages.append(ToolMessage(content=message, tool_call_id=call_id))
                         continue
@@ -183,9 +199,13 @@ async def booking_tool_executor(state: AgentState) -> dict:
                     }
                     headless = bool(args.get("headless", True))
                     booking_context["checkout_status"] = "in_progress"
+                    checkout_offer = dict(selected_offer)
+                    workspace_id = str(state.get("workspace_id") or "").strip()
+                    if workspace_id:
+                        checkout_offer.setdefault("workspace_id", workspace_id)
                     try:
                         result = await playwright_checkout_runner.checkout_to_confirmation(
-                            selected_offer,
+                            checkout_offer,
                             traveler,
                             headless=headless,
                             skip_fill=allow_empty_traveler,
@@ -200,6 +220,9 @@ async def booking_tool_executor(state: AgentState) -> dict:
 
                     booking_result = result
                     booking_context["checkout_status"] = result.get("status") or "unknown"
+                    checkout_turn_key = _latest_human_turn_key(list(state.get("messages") or []))
+                    if checkout_turn_key:
+                        booking_context["checkout_retry_turn_key"] = checkout_turn_key
                     if result.get("status") == "failed":
                         booking_context["last_error"] = result.get("reason")
                     _log.info(">>> BOOKING_TOOL_EXECUTOR checkout_result=%s", result
@@ -216,6 +239,23 @@ async def booking_tool_executor(state: AgentState) -> dict:
                 message = f"Unknown booking tool: {name}"
 
         except Exception as exc:
+            if name == "find_booking_options":
+                booking_offers = []
+                selected_offer = {}
+                booking_result = {}
+                booking_context = {
+                    "booking_type": str(args.get("booking_type", "")),
+                    "origin": str(args.get("origin", "")),
+                    "destination": str(args.get("destination", "")),
+                    "departure_date": str(args.get("departure_date", "")),
+                    "return_date": str(args.get("return_date", "")),
+                    "trip_type": str(args.get("trip_type", "")),
+                    "adults": int(args.get("adults", 1)),
+                    "provider_hint": str(args.get("provider_hint", "trip.com")),
+                    "attempted": True,
+                    "explicit_selection": False,
+                    "last_error": str(exc),
+                }
             message = f"Error executing {name}: {exc}"
 
         tool_messages.append(ToolMessage(content=message, tool_call_id=call_id))

@@ -22,6 +22,25 @@ describe('TripContext workspace hydration', () => {
     expect(result[1].content).toBe('I found 3 options');
   });
 
+  it('maps open_url interrupt events from workspace history into interrupt chat messages', () => {
+    const result = mapWorkspaceEventsToMessages([
+      {
+        role: 'agent',
+        content: 'https://trip.com/flights/passenger?token=visible',
+        created_at: '2026-04-24T10:00:05Z',
+        metadata: {
+          interrupt_type: 'open_url',
+          status: 'pending',
+        },
+      },
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].type).toBe('interrupt');
+    expect(result[0].interrupt_type).toBe('open_url');
+    expect(result[0].content).toBe('https://trip.com/flights/passenger?token=visible');
+  });
+
   it('hydrates trip, media folders, and chat from a workspace snapshot payload', () => {
     const result = hydrateWorkspaceSnapshot({
       workspace_id: 'telegram:-100:main',

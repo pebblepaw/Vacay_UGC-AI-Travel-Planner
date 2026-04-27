@@ -3,6 +3,7 @@ import sys
 import types
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+import socket
 
 import backend.services.automation.browser_use_worker as browser_use_worker_module
 import backend.services.automation.playwright_checkout as playwright_checkout_module
@@ -75,6 +76,32 @@ class FakeSearchPage:
 
     async def bring_to_front(self) -> None:
         return None
+
+
+class FakeBodyLocator:
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    async def inner_text(self, timeout: int = 0) -> str:
+        return self._text
+
+
+class FakeVerificationPage(FakeSearchPage):
+    def locator(self, selector: str):
+        if selector == "body":
+            return FakeBodyLocator(
+                "Sorry, you have made too many attempts. "
+                "Please complete the verification below. "
+                "Select icons in the correct order."
+            )
+        raise AssertionError(f"Unexpected selector: {selector}")
+
+    async def content(self) -> str:
+        return (
+            "Sorry, you have made too many attempts. "
+            "Please complete the verification below. "
+            "Select icons in the correct order."
+        )
 
 
 class FakeBrowser:
@@ -266,6 +293,7 @@ def test_trip_search_uses_remote_browser_worker_when_cdp_url_is_configured(monke
         SimpleNamespace(REMOTE_BROWSER_CDP_URL="http://browser-worker:9222"),
         raising=False,
     )
+    monkeypatch.setattr(socket, "gethostbyname", lambda host: "172.18.0.3")
 
     monkeypatch.setattr(worker, "_save_trip_debug", AsyncMock())
     monkeypatch.setattr(worker, "_wait_for_trip_results", AsyncMock())
@@ -302,7 +330,7 @@ def test_trip_search_uses_remote_browser_worker_when_cdp_url_is_configured(monke
     offers = asyncio.run(worker._search_with_playwright(query))
 
     assert offers
-    assert fake_async_playwright.chromium.cdp_endpoint == "http://browser-worker:9222"
+    assert fake_async_playwright.chromium.cdp_endpoint == "http://172.18.0.3:9222"
 
 
 def test_trip_search_marks_results_page_reference_as_live_session_only() -> None:
@@ -358,7 +386,54 @@ def test_checkout_fails_honestly_when_live_session_only_offer_loses_session() ->
     assert "results page" in result["reason"].lower()
 
 
-def test_checkout_reuses_live_session_page_when_available(monkeypatch) -> None:
+def test_checkout_returns_current_url_when_trip_verification_blocks_results(monkeypatch) -> None:
+    runner = PlaywrightCheckoutRunner()
+    fake_page = FakeVerificationPage()
+    fake_browser = FakeBrowser(fake_page)
+
+    async def register_session():
+        return await live_booking_sessions.register(
+            provider="trip.com",
+            playwright=types.SimpleNamespace(),
+            browser=fake_browser,
+            page=fake_page,
+            query_summary="Singapore->Sydney",
+        )
+
+    session = asyncio.run(register_session())
+    monkeypatch.setattr(runner, "_trip_select_offer_on_results", AsyncMock())
+    monkeypatch.setattr(runner, "_trip_checkout_flow", AsyncMock())
+
+    offer = {
+        "id": "offer_captcha",
+        "title": "Trip.com CAPTCHA Flight",
+        "provider": "trip.com",
+        "deeplink": "",
+        "handoff_mode": "live_session_only",
+        "results_page_url": fake_page.url,
+        "live_session_id": session.session_id,
+        "requires_live_session": True,
+    }
+
+    result = asyncio.run(
+        runner.checkout_to_confirmation(
+            offer,
+            traveler={},
+            headless=False,
+            skip_fill=True,
+        )
+    )
+
+    assert result["status"] == "needs_user_input"
+    assert result["handoff_channel"] == "provider_verification"
+    assert result["confirmation_url"] == fake_page.url
+    assert "verification" in result["reason"].lower()
+    assert fake_browser.closed is False
+
+    asyncio.run(live_booking_sessions.close(session.session_id))
+
+
+def test_checkout_prefers_direct_confirmation_url_when_live_session_is_available(monkeypatch) -> None:
     runner = PlaywrightCheckoutRunner()
     fake_page = FakeSearchPage()
     fake_browser = FakeBrowser(fake_page)
@@ -380,6 +455,11 @@ def test_checkout_reuses_live_session_page_when_available(monkeypatch) -> None:
 
     monkeypatch.setattr(runner, "_trip_select_offer_on_results", selected)
     monkeypatch.setattr(runner, "_trip_checkout_flow", fake_checkout_flow)
+    monkeypatch.setattr(
+        runner,
+        "_can_reuse_direct_handoff_url",
+        AsyncMock(return_value=True),
+    )
 
     offer = {
         "id": "offer_1",
@@ -403,7 +483,8 @@ def test_checkout_reuses_live_session_page_when_available(monkeypatch) -> None:
     )
 
     assert result["status"] == "needs_user_input"
-    assert result["handoff_channel"] == "live_browser"
+    assert result["handoff_channel"] == "direct_url"
+    assert result["confirmation_url"] == "https://www.trip.com/flights/passenger?booking=123"
     selected.assert_awaited_once()
     assert fake_browser.closed is False
 
@@ -448,6 +529,11 @@ def test_checkout_prefers_direct_confirmation_url_over_remote_browser_handoff(mo
 
     monkeypatch.setattr(runner, "_trip_select_offer_on_results", AsyncMock())
     monkeypatch.setattr(runner, "_trip_checkout_flow", fake_checkout_flow)
+    monkeypatch.setattr(
+        runner,
+        "_can_reuse_direct_handoff_url",
+        AsyncMock(return_value=True),
+    )
     monkeypatch.setattr(
         playwright_checkout_module,
         "settings",
@@ -496,6 +582,72 @@ def test_checkout_prefers_direct_confirmation_url_over_remote_browser_handoff(mo
     asyncio.run(live_booking_sessions.close(session.session_id))
 
 
+def test_checkout_falls_back_to_remote_browser_when_trip_direct_url_is_not_reusable(monkeypatch) -> None:
+    runner = PlaywrightCheckoutRunner()
+    fake_page = FakeSearchPage()
+    fake_browser = FakeBrowser(fake_page)
+
+    async def register_session():
+        return await live_booking_sessions.register(
+            provider="trip.com",
+            playwright=types.SimpleNamespace(),
+            browser=fake_browser,
+            page=fake_page,
+            query_summary="Singapore->Sydney",
+        )
+
+    session = asyncio.run(register_session())
+
+    async def fake_checkout_flow(page, traveler, skip_fill=False):
+        page.url = "https://www.trip.com/flights/passenger?booking=sign-in-required"
+
+    monkeypatch.setattr(runner, "_trip_select_offer_on_results", AsyncMock())
+    monkeypatch.setattr(runner, "_trip_checkout_flow", fake_checkout_flow)
+    monkeypatch.setattr(
+        runner,
+        "_can_reuse_direct_handoff_url",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        "backend.services.automation.playwright_checkout.browser_takeover_service",
+        SimpleNamespace(
+            enabled=True,
+            create_takeover_url=AsyncMock(
+                return_value="https://demo.vacay.ai/browser?token=signed-browser-token"
+            ),
+        ),
+        raising=False,
+    )
+
+    offer = {
+        "id": "offer_remote_signin",
+        "title": "Remote Demo Flight",
+        "provider": "trip.com",
+        "deeplink": "",
+        "handoff_mode": "live_session_only",
+        "results_page_url": fake_page.url,
+        "live_session_id": session.session_id,
+        "requires_live_session": True,
+        "card_selector": "[data-testid='u-flight-card-1']",
+    }
+
+    result = asyncio.run(
+        runner.checkout_to_confirmation(
+            offer,
+            traveler={},
+            headless=False,
+            skip_fill=True,
+        )
+    )
+
+    assert result["status"] == "needs_user_input"
+    assert result["handoff_channel"] == "remote_browser"
+    assert result["confirmation_url"] == "https://demo.vacay.ai/browser?token=signed-browser-token"
+    assert "hosted remote browser" in result["reason"].lower()
+
+    asyncio.run(live_booking_sessions.close(session.session_id))
+
+
 def test_checkout_reconnects_remote_browser_session_but_keeps_direct_confirmation_url(monkeypatch) -> None:
     runner = PlaywrightCheckoutRunner()
     fake_page = FakeSearchPage()
@@ -513,12 +665,18 @@ def test_checkout_reconnects_remote_browser_session_but_keeps_direct_confirmatio
         ),
         raising=False,
     )
+    monkeypatch.setattr(socket, "gethostbyname", lambda host: "172.18.0.3")
 
     async def fake_checkout_flow(page, traveler, skip_fill=False):
         page.url = "https://www.trip.com/flights/passenger?booking=remote-reconnect"
 
     monkeypatch.setattr(runner, "_trip_select_offer_on_results", AsyncMock())
     monkeypatch.setattr(runner, "_trip_checkout_flow", fake_checkout_flow)
+    monkeypatch.setattr(
+        runner,
+        "_can_reuse_direct_handoff_url",
+        AsyncMock(return_value=True),
+    )
     monkeypatch.setattr(
         "backend.services.automation.playwright_checkout.browser_takeover_service",
         SimpleNamespace(
@@ -554,7 +712,7 @@ def test_checkout_reconnects_remote_browser_session_but_keeps_direct_confirmatio
     assert result["status"] == "needs_user_input"
     assert result["handoff_channel"] == "direct_url"
     assert result["confirmation_url"] == "https://www.trip.com/flights/passenger?booking=remote-reconnect"
-    assert fake_async_playwright.chromium.cdp_endpoint == "http://browser-worker:9222"
+    assert fake_async_playwright.chromium.cdp_endpoint == "http://172.18.0.3:9222"
 
     for session_id in list(live_booking_sessions._sessions.keys()):
         asyncio.run(live_booking_sessions.close(session_id))

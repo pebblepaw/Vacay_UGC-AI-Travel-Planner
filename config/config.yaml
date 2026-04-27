@@ -51,6 +51,9 @@ copy:
     checkout_user_input: |-
       I opened the Trip.com continue page in a new window. Trip.com may ask you to sign in first, then return you to the traveler form.
       Status: {status}
+    checkout_provider_verification: |-
+      CAPTCHA encountered. Open the Trip.com link, complete the verification, then continue.
+      Status: {status}
     checkout_payment: |-
       I opened the Trip.com traveler details page in a new window. Finish the form and payment there.
       Status: {status}

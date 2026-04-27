@@ -6,7 +6,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     fluxbox \
     novnc \
+    socat \
     websockify \
+    x11-utils \
     x11vnc \
     xvfb \
     && rm -rf /var/lib/apt/lists/*
