@@ -68,6 +68,12 @@ If ports are busy:
 BACKEND_PORT=8010 FRONTEND_PORT=3000 ./start.sh
 ```
 
+`start.sh` will also set local public URLs from those ports, so generated workspace links point at the frontend port you chose. If you need to override the generated links, pass the public URL in the shell command:
+
+```bash
+PUBLIC_WEB_BASE_URL=https://your-web-url.example PUBLIC_API_BASE_URL=https://your-api-url.example ./start.sh
+```
+
 ## 5. Start The Telegram Demo
 
 Telegram cannot call `localhost`. Start a tunnel and register the webhook:
