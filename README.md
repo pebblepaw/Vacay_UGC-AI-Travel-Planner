@@ -44,10 +44,10 @@ Once you're happy with the plan, ask VACAY to **book the flight** for you as wel
 ## How it works
 
 
-<img width="1200" alt="ig_065bda5d330e23b60169ef6d10939c8191886d5efe4effbfff" src="https://github.com/user-attachments/assets/5c921edb-aed4-4b8d-9289-5be86e37726f" />
+<img width="900" alt="ig_065bda5d330e23b60169ef6d10939c8191886d5efe4effbfff" src="https://github.com/user-attachments/assets/5c921edb-aed4-4b8d-9289-5be86e37726f" />
 
 
-<img width="1200" alt="ig_065bda5d330e23b60169ef704c5b5081919d54671846381361" src="https://github.com/user-attachments/assets/c49ba794-2b64-4c8c-892f-5bbcf917a4e0" />
+<img width="900" alt="ig_065bda5d330e23b60169ef704c5b5081919d54671846381361" src="https://github.com/user-attachments/assets/c49ba794-2b64-4c8c-892f-5bbcf917a4e0" />
 
 
 ## Requirements

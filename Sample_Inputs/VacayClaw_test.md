@@ -1,6 +1,6 @@
 # VacayClaw Manual E2E Script
 
-Use these messages in `VacayClaw_26Apr` or a new Telegram group that contains `@VacayClawBot`.
+Use these messages in a new Telegram group that contains your locally hosted `@VacayClawBot`.
 
 For Telegram, paste each block as one message. Do not split the links across separate sends.
 
