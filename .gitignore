@@ -65,9 +65,14 @@ temp/
 *.log
 
 # Documentation
-docs/
+docs/*
+!docs/brd/
+docs/brd/*
+!docs/brd/env_vars.md
 Demo/*
 *.md
 !README.md
 !QUICKSTART.md
 !Sample_Inputs/VacayClaw_test.md
+!docs/brd/env_vars.md
+
