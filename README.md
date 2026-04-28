@@ -2,19 +2,19 @@
 
 VACAY is an **AI-powered travel planner** that turns short-form travel videos (TikTok, Douyin, YouTube Shorts) into interactive, editable itineraries. 
 
-Make a Telegram group with your friends, add the VACAY bot, send it TikToks, and VACAY automatically extracts locations, builds a day-by-day trip plan, pins everything to the map, and lets you see it on a hosted dashboard. 
+Make a **Telegram group** with your friends, add the VACAY bot, send it TikToks, and VACAY automatically extracts locations, builds a day-by-day trip plan, pins everything to the map, and lets you see it on a hosted dashboard. 
 
-Once you're happy with the plan, ask VACAY to book the flight for you as well! 
+Once you're happy with the plan, ask VACAY to **book the flight** for you as well! 
 
 ## What It Does
 
 - Imports TikTok, YouTube, Instagram, Douyin, and Rednote links into one shared workspace.
 - Uses LLM API to extract places from media.
-- Uses Tavily, Mapbox, and OpenStreetMap to verify and find new locations. 
+- Uses **Tavily, Mapbox, and OpenStreetMap** to verify and find new locations. 
 - Builds a day-by-day itinerary with map markers, timeline cards, and per-location media folders.
 - Syncs Telegram group messages and web chat through the same workspace event log.
-- Searches real Trip.com flight options, waits for user selection, and returns a browser handoff before payment.
-- Stores trips, workspace state, chat events, and memory in Supabase backend. 
+- Searches real **Trip.com** flight options, waits for user selection, and returns a browser handoff before payment.
+- Stores trips, workspace state, chat events, and memory in **Supabase** backend. 
 
 ## Demo 
 
@@ -43,9 +43,12 @@ Once you're happy with the plan, ask VACAY to book the flight for you as well!
 
 ## How it works
 
-<img width="1693" height="929" alt="ig_065bda5d330e23b60169ef704c5b5081919d54671846381361" src="https://github.com/user-attachments/assets/c49ba794-2b64-4c8c-892f-5bbcf917a4e0" />
 
-<img width="1672" height="941" alt="ig_065bda5d330e23b60169ef6d10939c8191886d5efe4effbfff" src="https://github.com/user-attachments/assets/5c921edb-aed4-4b8d-9289-5be86e37726f" />
+<img width="1200" alt="ig_065bda5d330e23b60169ef6d10939c8191886d5efe4effbfff" src="https://github.com/user-attachments/assets/5c921edb-aed4-4b8d-9289-5be86e37726f" />
+
+
+<img width="1200" alt="ig_065bda5d330e23b60169ef704c5b5081919d54671846381361" src="https://github.com/user-attachments/assets/c49ba794-2b64-4c8c-892f-5bbcf917a4e0" />
+
 
 ## Requirements
 
