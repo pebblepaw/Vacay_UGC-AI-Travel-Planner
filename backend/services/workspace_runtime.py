@@ -360,12 +360,14 @@ class WorkspaceRuntimeService:
         for video in source_videos:
             if isinstance(video, dict):
                 video["preview_url"] = self._normalize_media_url(video.get("preview_url"))
+                video["thumbnail_url"] = self._normalize_media_url(video.get("thumbnail_url"))
 
         media_by_place = snapshot.get("media_by_place") or {}
         for media_items in media_by_place.values():
             for media in media_items:
                 if isinstance(media, dict):
                     media["url"] = self._normalize_media_url(media.get("url")) or media.get("url")
+                    media["thumbnail_url"] = self._normalize_media_url(media.get("thumbnail_url"))
 
         return snapshot
 
@@ -394,6 +396,7 @@ class WorkspaceRuntimeService:
                                 "title": video.title,
                                 "url": playback_url,
                                 "source_url": video.url,
+                                "thumbnail_url": video.thumbnail_url,
                                 "platform": video.platform,
                                 "autoplay": bool(video.preview_url or video.platform == "youtube"),
                             }

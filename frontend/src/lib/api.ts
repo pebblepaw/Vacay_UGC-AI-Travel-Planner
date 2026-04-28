@@ -34,7 +34,7 @@ export interface ChatResponse {
 export interface WorkspaceSnapshotResponse {
   workspace_id: string;
   trip: any;
-  media_by_place: Record<string, Array<{ title: string; url: string; source_url?: string; platform: string; autoplay: boolean }>>;
+  media_by_place: Record<string, Array<{ title: string; url: string; thumbnail_url?: string; source_url?: string; platform: string; autoplay: boolean }>>;
   runtime_state: Record<string, unknown>;
   workspace_memory: Record<string, unknown>;
   recent_events: Array<Record<string, unknown>>;

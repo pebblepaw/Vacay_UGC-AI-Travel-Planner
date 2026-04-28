@@ -77,6 +77,22 @@ MEAL_OPTIONS_ACTION_RE = re.compile(
     r"\b(find|show|suggest|recommend|options?|places?|locations?|restaurants?)\b",
     re.IGNORECASE,
 )
+BOOKING_STATE_KEYS = ("booking_context", "booking_offers", "selected_offer", "booking_result")
+ITINERARY_EDIT_RE = re.compile(
+    r"\b(remove|delete|drop|move|swap|replace|resize|shrink|shorten|replan|optimi[sz]e)\b",
+    re.IGNORECASE,
+)
+BOOKING_CANCEL_RE = re.compile(
+    r"\b(stop|cancel|clear|end)\b.*\b(book|booking|handoff|checkout|flight)\b|"
+    r"\b(don't|do not|dont)\s+want\s+to\s+book\b",
+    re.IGNORECASE,
+)
+BOOKING_CONTINUATION_RE = re.compile(
+    r"\b(offer_\d+|option|choice|number|go with|let'?s go with|lets go with|pick|choose|select|take|"
+    r"book it|checkout|continue|retry|try again|solved|captcha|travell?er|passport|email|phone|"
+    r"birth|nationality)\b",
+    re.IGNORECASE,
+)
 
 
 def _build_empty_workspace_trip(workspace_id: str) -> Trip:
@@ -101,6 +117,38 @@ def _new_graph_thread_id(workspace_id: str) -> str:
 
 def _requests_workspace_restart(message: str) -> bool:
     return bool(WORKSPACE_RESET_RE.search(message or ""))
+
+
+def _has_booking_state(runtime_state: dict) -> bool:
+    return any(bool(runtime_state.get(key)) for key in BOOKING_STATE_KEYS)
+
+
+def _clear_booking_state(runtime_state: dict) -> dict:
+    return {
+        **runtime_state,
+        "booking_context": {},
+        "booking_offers": [],
+        "selected_offer": {},
+        "booking_result": {},
+    }
+
+
+def _should_clear_stale_booking_state(message: str, runtime_state: dict) -> bool:
+    if not _has_booking_state(runtime_state):
+        return False
+
+    text = message or ""
+    stripped = text.strip().lower()
+    if not stripped:
+        return False
+
+    if BOOKING_CANCEL_RE.search(text):
+        return True
+
+    if ITINERARY_EDIT_RE.search(text):
+        return not bool(BOOKING_CONTINUATION_RE.search(text) and not BOOKING_CANCEL_RE.search(text))
+
+    return False
 
 
 def _workspace_share_url(workspace_id: str) -> str:
@@ -1126,7 +1174,8 @@ async def _invoke_workspace_agent(workspace_id: str, message: str, user_id: str 
         elif role == "agent":
             history_messages.append(AIMessage(content=content))
 
-    if _is_fresh_booking_search(message, trip, history_messages):
+    is_fresh_booking_search = _is_fresh_booking_search(message, trip, history_messages)
+    if is_fresh_booking_search:
         runtime_state = {
             **runtime_state,
             "booking_context": {},
@@ -1134,6 +1183,9 @@ async def _invoke_workspace_agent(workspace_id: str, message: str, user_id: str 
             "selected_offer": {},
             "booking_result": {},
         }
+    elif _should_clear_stale_booking_state(message, runtime_state):
+        runtime_state = _clear_booking_state(runtime_state)
+        await workspace_runtime.save_runtime_state(workspace_id, runtime_state)
 
     initial_state = {
         "messages": history_messages[-10:] + [HumanMessage(content=message)],

@@ -30,7 +30,7 @@ interface TripContextType {
   activeView: 'timeline' | 'cards';
   setActiveView: (view: 'timeline' | 'cards') => void;
   isLoading: boolean;
-  mediaByPlace: Record<string, Array<{ title: string; url: string; source_url?: string; platform: string; autoplay: boolean }>>;
+  mediaByPlace: Record<string, Array<{ title: string; url: string; thumbnail_url?: string; source_url?: string; platform: string; autoplay: boolean }>>;
   createShareLink: () => Promise<string | null>;
   refreshWorkspaceSnapshot: () => Promise<void>;
   ingestWorkspaceUrls: (urls: string[]) => Promise<{ imported: number; failed: number }>;
@@ -84,7 +84,7 @@ export const TripProvider: React.FC<TripProviderProps> = ({ children, tripId, wo
   const [trip, setTrip] = useState<Trip>(sampleTrip);
   const [selectedPOI, setSelectedPOI] = useState<POI | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(workspaceId ? [] : initialChatMessages);
-  const [mediaByPlace, setMediaByPlace] = useState<Record<string, Array<{ title: string; url: string; source_url?: string; platform: string; autoplay: boolean }>>>({});
+  const [mediaByPlace, setMediaByPlace] = useState<Record<string, Array<{ title: string; url: string; thumbnail_url?: string; source_url?: string; platform: string; autoplay: boolean }>>>({});
   const chatMessagesRef = useRef<ChatMessage[]>(workspaceId ? [] : initialChatMessages);
   const workspaceLoadedRef = useRef(false);
 

@@ -29,6 +29,7 @@ import { Button } from '@/components/ui/button';
 type PlaceMedia = {
   title: string;
   url: string;
+  thumbnail_url?: string;
   source_url?: string;
   platform: string;
   autoplay: boolean;
@@ -70,6 +71,25 @@ export const canRenderVideoTag = (url: string, platform: string) => {
 
 export const canRenderImageTag = (url: string) => /\.(png|jpe?g|gif|webp|avif)(\?|$)/i.test(url);
 
+const renderMediaThumb = (item: PlaceMedia, className: string) => {
+  const thumbnailUrl = item.thumbnail_url || (canRenderImageTag(item.url) ? item.url : '');
+  if (thumbnailUrl) {
+    return <img src={thumbnailUrl} alt="" className={className} loading="lazy" />;
+  }
+  if (canRenderVideoTag(item.url, item.platform) || toEmbed(item.url)) {
+    return (
+      <div className={`${className} flex items-center justify-center bg-foreground/10`}>
+        <Play className="h-5 w-5 text-foreground" />
+      </div>
+    );
+  }
+  return (
+    <div className={`${className} flex items-center justify-center bg-muted text-[10px] font-semibold uppercase text-muted-foreground`}>
+      {item.platform}
+    </div>
+  );
+};
+
 const renderMediaFrame = (item: PlaceMedia, className: string, autoplay = true) => {
   const embed = toEmbed(item.url);
   if (embed) {
@@ -93,6 +113,7 @@ const renderMediaFrame = (item: PlaceMedia, className: string, autoplay = true) 
         loop
         playsInline
         controls
+        poster={item.thumbnail_url}
       >
         <source src={item.url} />
       </video>
@@ -233,17 +254,7 @@ export const CardsView = () => {
                           key={`${poi.id}-media-thumb-${idx}`}
                           className="relative h-16 overflow-hidden rounded-lg bg-muted"
                         >
-                          {canRenderImageTag(item.url) ? (
-                            <img src={item.url} alt="" className="h-full w-full object-cover" loading="lazy" />
-                          ) : canRenderVideoTag(item.url, item.platform) || toEmbed(item.url) ? (
-                            <div className="flex h-full w-full items-center justify-center bg-foreground/10">
-                              <Play className="h-5 w-5 text-foreground" />
-                            </div>
-                          ) : (
-                            <div className="flex h-full w-full items-center justify-center bg-muted text-[10px] font-semibold uppercase text-muted-foreground">
-                              {item.platform}
-                            </div>
-                          )}
+                          {renderMediaThumb(item, 'h-full w-full object-cover')}
                           {idx === 2 && media.length > 3 && (
                             <div className="absolute inset-0 flex items-center justify-center bg-background/75 text-sm font-bold">
                               +{media.length - 2}
@@ -306,8 +317,8 @@ export const CardsView = () => {
                     >
                       <div className="flex items-center gap-3">
                         <div className="flex h-14 w-16 flex-shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted">
-                          {canRenderImageTag(item.url) ? (
-                            <img src={item.url} alt="" className="h-full w-full object-cover" loading="lazy" />
+                          {item.thumbnail_url || canRenderImageTag(item.url) ? (
+                            renderMediaThumb(item, 'h-full w-full object-cover')
                           ) : canRenderVideoTag(item.url, item.platform) || toEmbed(item.url) ? (
                             <Play className="h-5 w-5" />
                           ) : (

@@ -43,6 +43,7 @@ vi.mock('@/contexts/TripContext', () => ({
         {
           title: 'Coogee walk clip',
           url: 'https://cdn.example.com/coogee.mp4',
+          thumbnail_url: 'https://cdn.example.com/coogee-thumb.jpg',
           platform: 'youtube',
           autoplay: true,
         },
@@ -90,7 +91,7 @@ describe('CardsView', () => {
   });
 
   it('opens a media overlay with autoplay video and source-link fallback', () => {
-    render(<CardsView />);
+    const { container } = render(<CardsView />);
 
     fireEvent.click(screen.getByRole('button', { name: /open media folder for coogee beach/i }));
 
@@ -100,6 +101,8 @@ describe('CardsView', () => {
     const video = document.querySelector('video');
     expect(video).not.toBeNull();
     expect(video?.autoplay).toBe(true);
+    expect(video?.getAttribute('poster')).toBe('https://cdn.example.com/coogee-thumb.jpg');
+    expect(container.querySelector('img[src="https://cdn.example.com/coogee-thumb.jpg"]')).not.toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: /douyin source clip douyin/i }));
 

@@ -95,6 +95,7 @@ async def test_build_workspace_snapshot_uses_poi_media_urls_over_title_guess(
                 url="https://instagram.com/reel/abc",
                 title="Clip A",
                 preview_url="http://127.0.0.1:8000/media/clip-a.mp4",
+                thumbnail_url="https://cdn.example.com/clip-a-thumb.jpg",
             ),
             SourceVideo(
                 platform="youtube",
@@ -157,6 +158,7 @@ async def test_build_workspace_snapshot_uses_poi_media_urls_over_title_guess(
         "https://youtube.com/watch?v=tokyo123",
     ]
     assert media[0]["url"] == "http://127.0.0.1:8000/media/clip-a.mp4"
+    assert media[0]["thumbnail_url"] == "https://cdn.example.com/clip-a-thumb.jpg"
     assert media[1]["url"] == "https://youtube.com/watch?v=tokyo123"
 
 

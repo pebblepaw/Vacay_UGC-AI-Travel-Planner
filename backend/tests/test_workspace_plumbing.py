@@ -85,6 +85,25 @@ def _make_empty_trip(trip_id: str = "trip_ws_empty") -> Trip:
     )
 
 
+def test_workspace_clears_stale_booking_state_for_itinerary_remove_request():
+    runtime_state = {
+        "booking_context": {"checkout_status": "needs_user_input"},
+        "booking_offers": [{"id": "offer_1"}],
+        "selected_offer": {"id": "offer_1"},
+        "booking_result": {
+            "status": "needs_user_input",
+            "confirmation_url": "http://127.0.0.1:8080/browser?token=stale",
+            "handoff_channel": "remote_browser",
+        },
+    }
+
+    assert workspaces_router._should_clear_stale_booking_state(
+        "Can you remove Sydney Harbour Beach from Day 1",
+        runtime_state,
+    )
+    assert not workspaces_router._should_clear_stale_booking_state("Option 2", runtime_state)
+
+
 @pytest.mark.asyncio
 async def test_workspace_import_binds_real_trip_then_snapshot(monkeypatch: pytest.MonkeyPatch):
     workspace_id = "telegram:-10011:main"
