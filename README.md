@@ -1,16 +1,51 @@
 # VacayClaw
 
-VacayClaw turns short-form travel videos into a shared trip workspace. A Telegram group and the web app control the same Supabase-backed trip, so users can import videos, edit the itinerary, open media folders, and hand off flight booking before payment.
+VACAY is an **AI-powered travel planner** that turns short-form travel videos (TikTok, Douyin, YouTube Shorts) into interactive, editable itineraries. 
+
+Make a Telegram group with your friends, add the VACAY bot, send it TikToks, and VACAY automatically extracts locations, builds a day-by-day trip plan, pins everything to the map, and lets you see it on a hosted dashboard. 
+
+Once you're happy with the plan, ask VACAY to book the flight for you as well! 
 
 ## What It Does
 
 - Imports TikTok, YouTube, Instagram, Douyin, and Rednote links into one shared workspace.
-- Uses Gemini to extract places from media.
-- Uses Tavily, Mapbox, and OpenStreetMap to resolve places and images.
+- Uses LLM API to extract places from media.
+- Uses Tavily, Mapbox, and OpenStreetMap to verify and find new locations. 
 - Builds a day-by-day itinerary with map markers, timeline cards, and per-location media folders.
 - Syncs Telegram group messages and web chat through the same workspace event log.
 - Searches real Trip.com flight options, waits for user selection, and returns a browser handoff before payment.
-- Stores trips, workspace state, chat events, and memory in Supabase.
+- Stores trips, workspace state, chat events, and memory in Supabase backend. 
+
+## Demo 
+
+<table align="center">
+  <tr>
+    <td align="center">
+      <img src="https://github.com/user-attachments/assets/fa1378a8-916b-4ef5-96c2-d10116a9fb36" width="600"/><br/>
+      <sub><b>Travel Itinerary</b></sub>
+    </td>
+    <td align="center">
+      <img src="https://github.com/user-attachments/assets/0e7a132d-dc5d-410a-8228-9e323aff93d3" width="600"/><br/>
+      <sub><b>Uploaded Media</b></sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="https://github.com/user-attachments/assets/748941b2-7057-463f-aecc-9b1e786c8714" width="600"/><br/>
+      <sub><b>Watch Media</b></sub>
+    </td>
+    <td align="center">
+      <img src="https://github.com/user-attachments/assets/8a8f309c-8239-4bc1-ace0-12b0a24350cd" width="600"/><br/>
+      <sub><b>Control through Telegram</b></sub>
+    </td>
+  </tr>
+</table>
+
+## How it works
+
+<img width="1693" height="929" alt="ig_065bda5d330e23b60169ef704c5b5081919d54671846381361" src="https://github.com/user-attachments/assets/c49ba794-2b64-4c8c-892f-5bbcf917a4e0" />
+
+<img width="1672" height="941" alt="ig_065bda5d330e23b60169ef6d10939c8191886d5efe4effbfff" src="https://github.com/user-attachments/assets/5c921edb-aed4-4b8d-9289-5be86e37726f" />
 
 ## Requirements
 
@@ -73,7 +108,7 @@ Change ports if needed:
 BACKEND_PORT=8010 FRONTEND_PORT=3000 ./start.sh
 ```
 
-## Run A Telegram Demo
+## Use our Demo Inputs
 
 Telegram needs a public HTTPS webhook. For local demos, use the built-in Cloudflare quick tunnel:
 
@@ -91,47 +126,12 @@ Then:
 
 Use [Sample_Inputs/VacayClaw_test.md](Sample_Inputs/VacayClaw_test.md) for copy-paste demo messages.
 
-## Current Demo Limits
-
-- AWS hosting is paused. The supported demo path is local frontend + local backend + Supabase.
-- Cloudflare quick tunnels are good for demos, not stable production URLs.
-- Douyin and Rednote can require fresh cookies. Treat that as an external platform blocker.
-- Long video imports can exceed Telegram or tunnel request timeouts. The backend may still finish and save the workspace after the visible webhook request times out.
-- Trip.com can show CAPTCHA. The accepted behavior is to return the current Trip.com or remote-browser URL and stop before payment.
-
-## Tests
-
-Run the project verification script:
-
-```bash
-scripts/codex/verify.sh
-```
-
-Useful focused checks:
-
-```bash
-source venv/bin/activate
-python -m pytest backend/tests/test_telegram_media_ingest.py backend/tests/test_trip_live_handoff.py -q
-
-cd frontend
-npm test -- CardsView ChatSidebar TripContext
-```
-
 ## Project Structure
 
 ```text
 backend/                 FastAPI backend, agent graph, services, routers
 frontend/                React + Vite frontend
 config/config.yaml       Model routing and user-facing booking copy
-docs/                    Architecture, environment, and handoff docs
 Sample_Inputs/           Manual Telegram and web E2E prompts
 deploy/                  Docker, Nginx, and worker deployment files
-scripts/codex/verify.sh  Local verification script
 ```
-
-## Main Docs
-
-- [AGENTS.md](AGENTS.md): operating rules for agents working in this repo
-- [23_Apr_Report.md](23_Apr_Report.md): implementation plan and current checklist
-- [docs/agent_handoff.md](docs/agent_handoff.md): tested paths and known gaps
-- [PROGRESS.md](PROGRESS.md): progress log
