@@ -1,10 +1,17 @@
-# VacayClaw
+<p align="center">
+  <img width="1600" alt="ig_0ada80e07f82dbff0169f0a8bc3a2481918e8543d4343c5a11" src="https://github.com/user-attachments/assets/b754fe22-f678-44f4-9c8f-27f2c241f148" />
+</p>
+<!-- <h1 align="center">VacayClaw</h1> -->
+  <p align="center">
+        <a href="https://youtu.be/Dha7aI1RXJg"><img src="https://img.shields.io/badge/YouTube-Demo-FF0000?logo=youtube&logoColor=white" alt="YouTube Demo" /></a></p>
+        
+## Overview
 
-VACAY is an **AI-powered travel planner** that turns short-form travel videos (TikTok, Douyin, YouTube Shorts) into interactive, editable itineraries. 
+VavayClaw is an **AI-powered travel planner** that turns short-form travel videos (TikTok, Douyin, YouTube Shorts) into interactive, editable itineraries. 
 
-Make a **Telegram group** with your friends, add the VACAY bot, send it TikToks, and VACAY automatically extracts locations, builds a day-by-day trip plan, pins everything to the map, and lets you see it on a hosted dashboard. 
+Make a **Telegram group** with your friends, add the @VavayClawBot, send it TikToks, and VACAY automatically extracts locations, builds a day-by-day trip plan, pins everything to the map, and lets you see it on a hosted dashboard. 
 
-Once you're happy with the plan, ask VACAY to **book the flight** for you as well! 
+Once you're happy with the plan, ask VavayClaw to **book the flight** for you as well! 
 
 ## What It Does
 
@@ -40,6 +47,12 @@ Once you're happy with the plan, ask VACAY to **book the flight** for you as wel
     </td>
   </tr>
 </table>
+
+<p align="center">
+  <a href="https://youtu.be/hMA_ZYjBpuI">
+     <b>Click here to watch the full demo here</b>
+  </a>
+</p>
 
 ## How it works
 
