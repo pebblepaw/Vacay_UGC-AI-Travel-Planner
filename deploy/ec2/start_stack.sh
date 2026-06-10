@@ -16,14 +16,22 @@ fi
 cd "$APP_DIR"
 "${COMPOSE[@]}" --env-file "$ENV_PATH" -f "$APP_DIR/docker-compose.yml" up --build -d
 
-for _ in $(seq 1 90); do
-  TUNNEL_URL="$("${COMPOSE[@]}" --env-file "$ENV_PATH" -f "$APP_DIR/docker-compose.yml" logs cloudflared 2>/dev/null | grep -Eo 'https://[-a-z0-9.]+trycloudflare.com' | tail -n 1 || true)"
-  if [ -n "$TUNNEL_URL" ]; then
-    printf '%s\n' "$TUNNEL_URL"
-    exit 0
-  fi
-  sleep 2
-done
+PUBLIC_URL=""
+if [ -f "$ENV_PATH" ]; then
+  PUBLIC_URL="$(grep -E '^PUBLIC_WEB_BASE_URL=' "$ENV_PATH" | tail -n 1 | cut -d'=' -f2- || true)"
+fi
 
-echo "Failed to discover Cloudflare tunnel URL from container logs" >&2
+if [ -z "$PUBLIC_URL" ] || [ "$PUBLIC_URL" = "http://localhost" ] || [ "$PUBLIC_URL" = "https://localhost" ]; then
+  EC2_PUBLIC_HOST="$(curl -fsS http://169.254.169.254/latest/meta-data/public-hostname 2>/dev/null || true)"
+  if [ -n "$EC2_PUBLIC_HOST" ]; then
+    PUBLIC_URL="http://${EC2_PUBLIC_HOST}"
+  fi
+fi
+
+if [ -n "$PUBLIC_URL" ]; then
+  printf '%s\n' "$PUBLIC_URL"
+  exit 0
+fi
+
+echo "Stack started but no public URL was configured" >&2
 exit 1

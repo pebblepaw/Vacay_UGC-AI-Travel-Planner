@@ -67,4 +67,21 @@ describe('AddUrlModal', () => {
       await screen.findByText(/Paste travel video links from TikTok, YouTube, Instagram, Douyin, or Rednote/i),
     ).toBeInTheDocument();
   });
+
+  it('treats xhslink short links as Rednote in the modal', async () => {
+    render(<AddUrlModal />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    const textarea = await screen.findByPlaceholderText(/Paste one or more links/i);
+    fireEvent.change(textarea, {
+      target: {
+        value: 'https://xhslink.com/a/demo123',
+      },
+    });
+
+    expect(screen.getByText('1 link(s) detected')).toBeInTheDocument();
+    const rednoteBadge = screen.getAllByText(/Rednote/).at(-1);
+    expect(rednoteBadge).toHaveClass('ring-2');
+  });
 });

@@ -54,11 +54,5 @@ services:
     ports:
       - "80:80"
 
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    command: tunnel --no-autoupdate --url http://nginx:80
-    depends_on:
-      - nginx
-
 volumes:
   browser-worker-data:

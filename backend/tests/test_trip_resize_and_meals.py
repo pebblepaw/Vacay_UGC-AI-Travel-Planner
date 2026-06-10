@@ -345,6 +345,48 @@ def test_execute_add_meal_stop_skips_restaurant_already_used_that_day(monkeypatc
     assert "Cafe Sydney" in message
 
 
+def test_execute_add_meal_stop_does_not_claim_success_if_replan_drops_new_stop(monkeypatch: pytest.MonkeyPatch):
+    trip = _trip_for_meals()
+
+    monkeypatch.setattr(
+        "backend.agent.nodes.travel_tool_executor._search_places_nearby_sync",
+        lambda anchor_coords, meal_type, cuisine_hint="": [
+            {
+                "name": "Bills Bondi",
+                "description": "Popular brunch spot near Bondi.",
+                "coords": [151.276, -33.892],
+            }
+        ],
+    )
+    monkeypatch.setattr("backend.agent.nodes.travel_tool_executor._fetch_image", lambda name: "https://example.com/meal.jpg")
+
+    def _fake_execute_add(local_trip, args):
+        local_trip.days[0].pois.append(
+            _poi(
+                args["name"],
+                (args["longitude"], args["latitude"]),
+                category="Food",
+                slot=args["time_slot"],
+            )
+        )
+        return local_trip, f"Added '{args['name']}' (ID: poi_food) to Day 1."
+
+    def _fake_fit_day_within_clock(local_trip, day_number):
+        del day_number
+        local_trip.days[0].pois = [poi for poi in local_trip.days[0].pois if poi.name != "Bills Bondi"]
+        return local_trip, ["Bills Bondi"]
+
+    monkeypatch.setattr("backend.agent.nodes.travel_tool_executor._execute_add", _fake_execute_add)
+    monkeypatch.setattr("backend.agent.nodes.travel_tool_executor._fit_day_within_clock", _fake_fit_day_within_clock)
+
+    updated, message = _execute_add_meal_stop(trip, day_number=1, meal_type="lunch", cuisine_hint="")
+
+    food_names = [poi.name for poi in updated.days[0].pois if poi.category == "Food"]
+    assert "Bills Bondi" not in food_names
+    assert "Bills Bondi" not in message
+    assert "could not" in message.lower()
+
+
 def test_execute_add_meal_stops_keep_days_in_time_order_without_overlaps(monkeypatch: pytest.MonkeyPatch):
     trip = _trip_for_multi_day_meals()
     meal_names = iter(["Beach Burrito Company", "Manly Greenhouse", "Toppinz", "Frango"])

@@ -1049,11 +1049,18 @@ def _execute_add_meal_stop(
         for result in results
         if str(result.get("name") or "").strip().lower() not in existing_names
     ]
-    best_result = _pick_named_place_result(unique_results or results, anchor_coords)
-    if not best_result:
+    candidate_results = unique_results or results
+    if not candidate_results:
         return trip, f"Could not find a {meal_type} place near {anchor_name}."
 
-    coords = best_result.get("coords") or [0.0, 0.0]
+    ranked_results = sorted(
+        candidate_results,
+        key=lambda item: (
+            item != _pick_named_place_result(candidate_results, anchor_coords),
+            haversine_km((item.get("coords") or [0.0, 0.0])[0:2], anchor_coords) if anchor_coords and item.get("coords") else 0.0,
+            str(item.get("name") or "").lower(),
+        ),
+    )
     meal_slots = {
         "breakfast": "09:00 - 10:00",
         "brunch": "11:00 - 12:15",
@@ -1061,23 +1068,33 @@ def _execute_add_meal_stop(
         "dinner": "19:00 - 20:30",
     }
     slot = meal_slots.get(meal_type.lower(), "12:30 - 13:45")
-    vibe = best_result.get("description") or f"{meal_type.title()} stop near {anchor_name}"
-    add_args = {
-        "day_number": day_number,
-        "name": best_result["name"],
-        "category": "Food",
-        "time_slot": slot,
-        "vibe": vibe,
-        "longitude": coords[0],
-        "latitude": coords[1],
-        "priority": "normal",
-        "intensity": "low",
-        "visit_duration": 75 if meal_type.lower() in {"lunch", "dinner", "brunch"} else 60,
-        "img": best_result.get("image") or _fetch_image(best_result["name"]),
-    }
-    trip, add_message = _execute_add(trip, add_args)
-    trip, _ = _fit_day_within_clock(trip, day_number)
-    return trip, add_message
+    duration = 75 if meal_type.lower() in {"lunch", "dinner", "brunch"} else 60
+
+    for result in ranked_results:
+        coords = result.get("coords") or [0.0, 0.0]
+        vibe = result.get("description") or f"{meal_type.title()} stop near {anchor_name}"
+        add_args = {
+            "day_number": day_number,
+            "name": result["name"],
+            "category": "Food",
+            "time_slot": slot,
+            "vibe": vibe,
+            "longitude": coords[0],
+            "latitude": coords[1],
+            "priority": "normal",
+            "intensity": "low",
+            "visit_duration": duration,
+            "img": result.get("image") or _fetch_image(result["name"]),
+        }
+        trip, add_message = _execute_add(trip, add_args)
+        trip, dropped_names = _fit_day_within_clock(trip, day_number)
+        target_day = next((day for day in trip.days if day.day_number == day_number), None)
+        if target_day and any(poi.name == result["name"] for poi in target_day.pois if poi.category == "Food"):
+            return trip, add_message
+        if result["name"] in dropped_names:
+            logger.info("Dropped meal candidate after replanning: %s", result["name"])
+
+    return trip, f"Could not keep a {meal_type} stop near {anchor_name} without overcrowding Day {day_number}."
 
 def _geographic_cluster(pois: list[POI], k: int) -> list[list[POI]]:
     """Simple geographic clustering: assign POIs to k groups based on proximity.

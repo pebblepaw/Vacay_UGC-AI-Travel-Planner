@@ -233,15 +233,29 @@ class PlaywrightCheckoutRunner:
                 "artifacts": [str(before_path), str(after_path)],
             }
             if using_live_browser or not headless:
-                result["handoff_channel"] = "live_browser"
-                if skip_fill:
-                    result["reason"] = "Reached traveler info page in the live browser window. Continue there."
+                direct_confirmation_url = str(page.url or "")
+                if direct_confirmation_url and not self._is_results_page(direct_confirmation_url):
+                    result["handoff_channel"] = "direct_url"
+                    if skip_fill:
+                        result["reason"] = (
+                            "Reached traveler info page on the provider site. "
+                            "Continue there."
+                        )
+                    else:
+                        result["reason"] = (
+                            "Reached pre-payment stage on the provider site. "
+                            "Review the fare and finish there."
+                        )
                 else:
-                    result["reason"] = (
-                        "Reached pre-payment stage in the live browser window. "
-                        "Review and finish there. Final payment is intentionally not clicked."
-                    )
-                if live_session_id and browser_takeover_service.enabled:
+                    result["handoff_channel"] = "live_browser"
+                    if skip_fill:
+                        result["reason"] = "Reached traveler info page in the live browser window. Continue there."
+                    else:
+                        result["reason"] = (
+                            "Reached pre-payment stage in the live browser window. "
+                            "Review and finish there. Final payment is intentionally not clicked."
+                        )
+                if result["handoff_channel"] != "direct_url" and live_session_id and browser_takeover_service.enabled:
                     result["handoff_channel"] = "remote_browser"
                     result["confirmation_url"] = await browser_takeover_service.create_takeover_url(
                         session_id=live_session_id,

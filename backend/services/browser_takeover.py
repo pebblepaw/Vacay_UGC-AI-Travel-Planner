@@ -21,9 +21,19 @@ class BrowserTakeoverService:
         session_id: str,
         workspace_id: str | None = None,
     ) -> str:
+        session = await live_booking_sessions.get(session_id)
+        recovery: dict[str, Any] = {}
+        if session is not None:
+            try:
+                recovery["current_url"] = str(session.page.url or "")
+            except Exception:
+                recovery["current_url"] = ""
+            recovery["provider"] = str(session.provider or "")
+            recovery["query_summary"] = str(session.query_summary or "")
         token = live_booking_sessions.make_takeover_token(
             session_id=session_id,
             workspace_id=workspace_id,
+            recovery=recovery or None,
         )
         base = settings.PUBLIC_WEB_BASE_URL.rstrip("/")
         return f"{base}/browser?token={quote(token)}"
@@ -35,7 +45,8 @@ class BrowserTakeoverService:
 
         workspace_id = payload.get("workspace_id")
         session = await live_booking_sessions.get(payload.get("session_id"))
-        current_url = ""
+        recovery = payload.get("recovery") if isinstance(payload.get("recovery"), dict) else {}
+        current_url = str(recovery.get("current_url") or "")
         active = session is not None
         if session is not None:
             try:
@@ -51,10 +62,8 @@ class BrowserTakeoverService:
                 or booking_result.get("confirmation_url")
                 or ""
             )
-            if not current_url:
+            if durable_url:
                 current_url = durable_url
-            if not active and booking_result.get("status") in {"needs_user_payment", "needs_user_input"}:
-                active = bool(durable_url and settings.PUBLIC_REMOTE_BROWSER_URL)
 
         return {
             "session_id": payload.get("session_id"),

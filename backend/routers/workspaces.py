@@ -12,6 +12,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from backend.agent.graph import app
 from backend.agent.nodes.travel_tool_executor import _execute_replan_day
+from backend.config import settings
 from backend.models.schemas import (
     Accommodation,
     ChatMessage,
@@ -28,6 +29,7 @@ from backend.services.gemini_analyzer import gemini_analyzer
 from backend.services.itinerary_builder import itinerary_builder
 from backend.services.booking_intent import normalize_booking_intent
 from backend.services.tavily_location import tavily_location
+from backend.services.telegram_bot import telegram_bot
 from backend.services.video_downloader import video_downloader
 from backend.services.workspace_runtime import workspace_runtime
 from backend.storage.supabase_storage import supabase_storage as storage
@@ -85,6 +87,85 @@ def _new_graph_thread_id(workspace_id: str) -> str:
 
 def _requests_workspace_restart(message: str) -> bool:
     return bool(WORKSPACE_RESET_RE.search(message or ""))
+
+
+def _workspace_share_url(workspace_id: str) -> str:
+    token = workspace_runtime.make_share_token(workspace_id)
+    base = settings.PUBLIC_WEB_BASE_URL.rstrip("/")
+    return f"{base}/?workspace={workspace_id}&token={token}"
+
+
+def _workspace_telegram_target(workspace_id: str) -> tuple[int, int | None] | None:
+    if not workspace_id.startswith("telegram:"):
+        return None
+    parts = workspace_id.split(":", 2)
+    if len(parts) != 3:
+        return None
+    try:
+        chat_id = int(parts[1])
+    except ValueError:
+        return None
+    thread_part = parts[2]
+    if thread_part == "main":
+        return chat_id, None
+    try:
+        return chat_id, int(thread_part)
+    except ValueError:
+        return chat_id, None
+
+
+def _format_interrupt_options(response: ChatResponse) -> str:
+    lines: list[str] = []
+    for msg in response.messages:
+        if msg.type != "interrupt" or not msg.options:
+            continue
+        lines.append("")
+        lines.append("Options:")
+        for idx, opt in enumerate(msg.options, start=1):
+            lines.append(f"{idx}. {opt.name} — ${opt.price:.2f}")
+    return "\n".join(lines)
+
+
+def _format_workspace_reply_for_telegram(workspace_id: str, response: ChatResponse) -> str:
+    agent_text = next((msg.content for msg in reversed(response.messages) if msg.type == "agent" and msg.content), "") or "Done."
+    lines = [agent_text]
+    options_text = _format_interrupt_options(response)
+    if options_text:
+        lines.append(options_text)
+    open_url = next(
+        (
+            msg.content
+            for msg in response.messages
+            if msg.type == "interrupt" and msg.interrupt_type == "open_url" and msg.content
+        ),
+        "",
+    )
+    if open_url:
+        lines.extend(["", f"Link: {open_url}"])
+    lines.extend(["", f"Workspace: {_workspace_share_url(workspace_id)}"])
+    return "\n".join(lines)
+
+
+async def _mirror_web_turn_to_telegram(workspace_id: str, message: str, response: ChatResponse) -> None:
+    if not telegram_bot.enabled:
+        return
+    target = _workspace_telegram_target(workspace_id)
+    if target is None:
+        return
+    chat_id, message_thread_id = target
+    try:
+        await telegram_bot.send_message(
+            chat_id=chat_id,
+            text=f"Web user: {message}",
+            message_thread_id=message_thread_id,
+        )
+        await telegram_bot.send_message(
+            chat_id=chat_id,
+            text=_format_workspace_reply_for_telegram(workspace_id, response),
+            message_thread_id=message_thread_id,
+        )
+    except Exception as exc:
+        logger.error("Telegram web mirror send failed for %s: %s", workspace_id, exc)
 
 
 def _build_media_staging_trip(workspace_id: str, video_metadata: list[dict], trip_title: str | None = None) -> Trip:
@@ -720,12 +801,15 @@ async def restart_workspace_trip(workspace_id: str):
 @router.post("/{workspace_id}/chat", response_model=ChatResponse)
 async def send_workspace_message(workspace_id: str, request: WorkspaceChatRequest):
     await workspace_runtime.ensure_workspace(workspace_id)
-    return await _invoke_workspace_agent(
+    response = await _invoke_workspace_agent(
         workspace_id=workspace_id,
         message=request.message,
         user_id=request.user_id,
         source=request.source,
     )
+    if request.source == "web":
+        await _mirror_web_turn_to_telegram(workspace_id, request.message, response)
+    return response
 
 
 @router.get("/{workspace_id}/snapshot", response_model=WorkspaceSnapshotResponse)

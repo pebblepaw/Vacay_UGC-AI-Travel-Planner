@@ -18,22 +18,24 @@
 - [ ] Add durable LangGraph persistence and remove all in-memory booking and chat session state.
 - [x] Add workspace memory and user memory.
 - [x] Extend media ingestion to TikTok, YouTube, and Instagram in one shared workspace flow.
-- [ ] Extend the same shared workspace flow to Douyin and Rednote.
+- [x] Extend the same shared workspace flow to Douyin and Rednote.
 - [x] Add media-to-place linking so the bot can resolve requests like “add the cafe in this TikTok”.
 - [x] Rebuild the frontend around workspace snapshots, live updates, and shared web chat.
 - [x] Add per-location media folders with autoplay clips on the desktop web view.
-- [ ] Replace URL-only booking handoff with a cloud browser session handoff that survives remote use.
-- [ ] Deploy the full stack on one EC2 host with Docker Compose, Nginx, and Telegram webhooks.
+- [x] Replace URL-only booking handoff with a cloud browser session handoff that survives remote use.
+- [x] Deploy the full stack on one EC2 host with Docker Compose, Nginx, and Telegram webhooks.
 - [ ] Write end-to-end tests and a fixed demo script for the final presentation.
 
 ## Branch Status (April 26, 2026)
 
-**This branch is a strong demo build, not a finished delivery.** The shared workspace runtime works. Telegram replies work. The web handoff works. The first itinerary step and the 2-day resize step ran against the live stack. Later steps still drift between what the bot says and what the saved workspace snapshot shows.
+**This branch is a strong demo build, not a finished delivery.** The shared workspace runtime works. Telegram replies work. The web handoff works. The browser handoff now keeps a recovery URL even after the live session registry entry is gone. The branch still needs one clean full Telegram E2E run from a fresh workspace before it can be called done.
 
 What is done:
 
 - Workspace-scoped routing, persistence, share links, and signed web handoff are in place.
 - Telegram webhook ingestion and outbound replies work for a tagged group-chat bot.
+- Telegram now ignores duplicate webhook deliveries by `update_id`.
+- Telegram now ignores edited messages instead of re-running the agent on message edits.
 - The web app reads workspace snapshots, shows a shared map, shows shared chat history, and renders media folders by place.
 - The backend now preserves the real workspace trip binding after import and chat attach.
 - Partial download failures now keep the correct original source URL.
@@ -42,35 +44,45 @@ What is done:
 - Each top-level chat turn now uses a fresh LangGraph thread id, so old plan branches do not leak into the next user turn.
 - Non-booking messages no longer call the booking-intent model first.
 - Flight intent now has a rule-based fallback path when the LLM is unavailable.
+- Meal insertion now checks the saved itinerary after replanning and stops claiming success when the new food stop gets dropped.
+- Rednote short links from `xhslink.com` now resolve through the same shared ingest flow as full Rednote URLs.
+- The browser takeover token now carries recovery state, and `/api/browser/takeover` can still return the last known Trip.com page when the live session entry is gone.
 - The branch has a live EC2 deployment with Docker Compose, Nginx, Telegram webhooks, and a public remote browser session exposed through a Cloudflare quick tunnel.
 
 What is still broken:
 
-- Gemini credits are exhausted. Real media analysis and any LLM-only path cannot be verified further until credits are restored or another provider is configured.
-- The later Telegram E2E steps are not clean. The bot can return a success message that does not match the persisted workspace snapshot.
-- The meal-planning step is not reliable. One live run returned a single added restaurant reply, but the saved snapshot did not retain the food stop.
-- The workspace event log is noisy from repeated re-import and retry traffic. It is hard to trust `recent_events` as a clean demo transcript after repeated test runs.
+- The five-step Telegram script in `Sample_Inputs/VacayClaw_test.md` has not been re-run cleanly from a fresh workspace on this exact commit.
+- Douyin and Rednote now have code coverage, but they were not re-run through the live Telegram stack in this pass.
+- The live demo Telegram group is still noisy from earlier replay traffic. Use a fresh group or fresh topic for the next real run.
 - The public stack still uses a Cloudflare quick tunnel. It is good enough for a demo day. It is not a stable public deployment.
-- The browser takeover flow is only partly finished. The remote browser worker exists, but the handoff is not yet a polished signed takeover product flow.
-- `live_booking_sessions` still keeps browser session state in memory.
-- Douyin and Rednote are still not verified on this branch.
+- `live_booking_sessions` still keeps active Playwright handles in memory. The recovery URL survives. The live page object does not.
+- There is still no clean final proof that the full public booking flow reaches the pre-payment page on this exact commit.
 
-What I could verify before credits ran out:
+What I verified on this branch:
 
-- Step 1: import TikTok inputs and build a shared Sydney trip.
-- Step 2: shrink the trip to 2 days through the live Telegram route and send the bot reply back into the Telegram group.
-- The public workspace page rendered the map and markers after the frontend env fix.
-- Local targeted tests passed for:
-  - async Postgres checkpointer setup
-  - empty-shell workspace import replacement
-  - booking-intent non-booking short-circuit
-  - booking-intent fallback parsing when the LLM is unavailable
+- Real earlier checks on this branch:
+  - Step 1: import TikTok inputs and build a shared Sydney trip.
+  - Step 2: shrink the trip to 2 days through the live Telegram route and send the bot reply back into the Telegram group.
+  - The public workspace page rendered the map and markers after the frontend env fix.
+- Local test coverage on this commit:
+  - Telegram duplicate-delivery handling.
+  - Telegram edited-message ignore path.
+  - Meal insertion truthfulness after replanning.
+  - Browser takeover recovery when the live session is gone.
+  - Signed browser handoff behavior in `test_trip_live_handoff.py`.
+  - Rednote `xhslink.com` detection in backend and frontend.
+- Local validation commands passed:
+  - targeted backend tests for Telegram, meal edits, browser takeover, live handoff, response formatting, and media downloader behavior
+  - frontend modal tests
+  - frontend production build
+  - `scripts/codex/verify.sh`
 
 What I could not finish:
 
 - A clean five-step Telegram E2E run from `Sample_Inputs/VacayClaw_test.md`.
-- A clean final audit of meal insertion, cinema insertion, and booking handoff against one stable saved workspace.
-- Final browser polish on the public stack after the later-state drift bug is fixed.
+- A live rerun of Douyin and Rednote imports through Telegram after the short-link fix.
+- A clean final audit of cinema insertion and booking handoff against one fresh saved workspace.
+- Final browser polish on the public stack after the last live E2E run.
 
 ## Decision: Build VacayClaw Here
 

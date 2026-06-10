@@ -20,7 +20,7 @@ const platformPatterns = [
   { name: 'TikTok', pattern: /tiktok\.com/i, icon: '📱' },
   { name: 'Douyin', pattern: /douyin\.com/i, icon: '🎵' },
   { name: 'YouTube', pattern: /youtube\.com|youtu\.be/i, icon: '▶️' },
-  { name: 'Rednote', pattern: /xiaohongshu\.com|rednote/i, icon: '📕' },
+  { name: 'Rednote', pattern: /xiaohongshu\.com|rednote|xhslink\.com/i, icon: '📕' },
   { name: 'Instagram', pattern: /instagram\.com/i, icon: '📷' },
 ];
 
